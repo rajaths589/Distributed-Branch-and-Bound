@@ -1,6 +1,8 @@
+#include <stdlib.h>
 #include <omp.h>
 
 #include "priority_queue.h"
+#include "comforts.h"
 
 queue_head* merge_helper(queue_head* q1, queue_head* q2);
 queue_head* prune_helper(queue_head* qh, float min_bound);
@@ -17,14 +19,14 @@ queue* create_queue() {
 	NEW(queue, q);
 	q->length = 0;
 	q->root_node = NULL;
-	omp_lock_init(&q->global_lock);
+	omp_init_lock(&q->global_lock);
 
 	return q;
 }
 
 void destroy_queue(queue* q) {
 	destroy_node(q->root_node);
-	omp_lock_destroy(&q->global_lock);
+	omp_destroy_lock(&q->global_lock);
 	free(q);
 }
 
@@ -47,7 +49,7 @@ int pq_length(queue* q) {
 	return l;
 }
 
-solution_vector* pq_min_extract(queue* q) {
+solution_vector* pq_min_extract(queue* q, float* pr) {
 	solution_vector* min_vector;	
 
 	LOCK(q);
@@ -55,11 +57,12 @@ solution_vector* pq_min_extract(queue* q) {
 	if (q->length == 0) {
 		min_vector = NULL;
 	} else {
-		min_vector = q->root_node->partial_solution;		
+		min_vector = q->root_node->partial_solution;
+		*pr = q->root_node->priority;
 		
 		queue_head *left, *right;
-		left = q->left_subtree;
-		right = q->right_subtree;
+		left = q->root_node->left_subtree;
+		right = q->root_node->right_subtree;
 
 		q->root_node = merge_helper(left, right);
 		q->length --;
@@ -70,32 +73,31 @@ solution_vector* pq_min_extract(queue* q) {
 	return min_vector;
 }
 
-void pq_insert(queue* q, float priority, solution_vector* partial_solution) {
+//not concurrent
+void pq_insert_nc(queue* q, float priority, solution_vector* partial_solution) {
 	NEW(queue_head, qh);
 
 	qh->priority = priority;
 	qh->partial_solution = partial_solution;
-	qh->left = NULL;
-	qh->right = NULL;
+	qh->left_subtree = NULL;
+	qh->right_subtree = NULL;
 	qh->distance = 0;
-
-
-	LOCK(q);
 
 	q->root_node = merge_helper(q->root_node, qh);
 	q->length ++;
-
-	UNLOCK(q);	
 }
 
 
-void pq_merge(queue* q1, queue_head* q2, int length) {
-	LOCK(q);
+void pq_merge(queue* q1, queue* q2) {
+	LOCK(q1);
 
-	q1->root_node = merge_helper(q1->root_node, q2);
-	q1->length += length;
+	q1->root_node = merge_helper(q1->root_node, q2->root_node);
+	q1->length += q2->length;
 
-	UNLOCK(q);
+	UNLOCK(q1);
+
+	q2->length = 0;
+	q2->root_node = NULL;
 }
 
 void pq_prune(queue* q, float min_bound) {
@@ -131,7 +133,7 @@ queue_head* merge_helper(queue_head* q1, queue_head* q2) {
 	if (q1->right_subtree == NULL)
 		q1->distance = 0;
 	else
-		q1->distance = 1 + node_distance(q->right_subtree);
+		q1->distance = 1 + node_distance(q1->right_subtree);
 
 	return q1;
 }
@@ -152,10 +154,17 @@ queue_head* prune_helper(queue_head* q, float min_bound) {
 		SWAP(q->left_subtree, q->right_subtree);
 	}
 
-	if (q->right_subtree == NULL)
+	if (q->right_subtree == NULL) {
 		q->distance = 0;
-	else
+		if (q->left_subtree != NULL)
+			q->length = 1 + q->left_subtree->length;
+		else
+			q->length = 1;
+	}		
+	else {
 		q->distance = 1 + node_distance(q->right_subtree);
+		q->length = 1 + q->left_subtree->length + q->right_subtree->length;
+	}		
 
 	return q;
 }

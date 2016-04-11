@@ -28,13 +28,12 @@ struct queue* create_queue();
 void destroy_queue(struct queue* q);
 int pq_length(struct queue* q);
 
-solution_vector* pq_min_extract(struct queue* q);
-void pq_insert(struct queue* q, float priority, solution_vector* partial_solution);
-void pq_merge(struct queue* q1, struct queue_head* q2, int length);
+solution_vector* pq_min_extract(struct queue* q, float* pr);
+void pq_insert_nc(struct queue* q, float priority, solution_vector* partial_solution);
+void pq_merge(struct queue* q1, struct queue* q2);	//q2 will be cleared when the method exists
 void pq_prune(struct queue* q, float min_bound);
 
 //add function for bulk extract for load balancing
-
 
 typedef struct queue queue;
 typedef struct queue_head queue_head;
