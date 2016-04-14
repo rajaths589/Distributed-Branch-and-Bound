@@ -15,6 +15,13 @@ int node_distance(queue_head* q) {
 	return q->distance;
 }
 
+int node_length(queue_head* q) {
+	if (q == NULL)
+		return 0;
+
+	return q->length;
+}
+
 queue* create_queue() {
 	NEW(queue, q);
 	q->length = 0;
@@ -167,4 +174,47 @@ queue_head* prune_helper(queue_head* q, float min_bound) {
 	}		
 
 	return q;
+}
+
+queue_head* pq_extract(struct queue* q, int num) {
+	assert(num > 0);
+
+	LOCK(q);
+
+	assert(num < q->length);
+
+	queue_head* qh = extract_helper(q->root_node, num);
+	q->length = q->root_node->length;
+
+	UNLOCK(q);
+
+	return qh;
+}
+
+queue_head* extract_helper(queue_head* qh, int num) {
+	queue_head *temp_r, temp;
+
+	if (MAX(node_length(qh->left_subtree), node_length(qh->right_subtree)) == node_length(qh->left_subtree)) {
+		if (node_length(qh->left_subtree) == num) {
+			temp_r = qh->left_subtree;
+			qh->left_subtree = NULL;
+		} else {
+			temp_r = extract_helper(qh->left_subtree, num);
+		}
+	} else {
+		if (node_length(qh->right_subtree) == num) {
+			temp_r = qh->right_subtree;
+			qh->right_subtree = NULL;
+		} else {
+			temp_r = extract_helper(qh->right_subtree, num);
+		}
+	}
+
+	if (node_distance(q->right_subtree) > node_distance(q->left_subtree)) {
+		SWAP(q->left_subtree, q->right_subtree);
+	}
+	qh->distance = MIN(node_distance(qh->left_subtree), node_distance(qh->right_subtree)) + 1;
+	qh->length = node_length(qh->left_subtree) + node_distance(qh->right_subtree);
+
+	return temp_r;
 }
