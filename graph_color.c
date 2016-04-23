@@ -93,13 +93,17 @@ int construct_candidates(solution_vector partial_solution, float partial_soln_sc
 			setIndex(clashing_colors, partial->vertex_colors[l->to]);
 		}
 	}
+	bitvector* used_colors = create_bitvector(data->max_colors);
+	for (int i = 0; i < partial->curr_length; i++) {
+		setIndex(used_colors, partial->vertex_colors[i]);
+	}
 
 	for (int i = 0; i < data->max_colors; i++) {
 		if (!getIndex(clashing_colors, i)) {
 			extension = create_soln_copy(partial);
 			extension->vertex_colors[extension->curr_length] = i;
 			extension->curr_length++;
-			if (i < partial_soln_score) {
+			if (getIndex(used_colors, i)) {
 				pq_insert_nc(private_queue, partial_soln_score, extension);
 			} else {
 				pq_insert_nc(private_queue, partial_soln_score + 1, extension);
