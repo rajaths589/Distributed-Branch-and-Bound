@@ -57,7 +57,7 @@ int pq_length(queue* q) {
 }
 
 solution_vector* pq_min_extract(queue* q, float* pr) {
-	solution_vector* min_vector;	
+	solution_vector* min_vector;
 
 	LOCK(q);
 	
