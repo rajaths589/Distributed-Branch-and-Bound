@@ -5,23 +5,23 @@
 #include <stdio.h>
 
 int main(int argc, char* argv[]) {
-	int nthreads = 4;	
+	int nthreads = 4;
 	queue* q = create_queue();
 
 	srand(time(NULL));
 	int max_numbers = 1000;
 	int num_inserts = 100;
 
-	unsigned char* is_used = (unsigned char*) calloc(max_numbers, sizeof(unsigned char));
+//	unsigned char* is_used = (unsigned char*) calloc(max_numbers, sizeof(unsigned char));
 	int* numbers = (int*) malloc(num_inserts*sizeof(int));
 
 	for (int i = 0; i < num_inserts; ) {
 		int r = rand()%max_numbers;
 
-		if (is_used[r])
-			continue;
+//		if (is_used[r])
+//			continue;
 
-		is_used[r] = 1;
+//		is_used[r] = 1;
 		numbers[i] = r;
 		i++;
 	}
@@ -31,7 +31,7 @@ int main(int argc, char* argv[]) {
 	#pragma omp parallel num_threads(nthreads)
 	{
 		int my_rank = omp_get_thread_num();
-		
+
 		queue* private_q = create_queue();
 
 		for (int j = my_rank*p; j < (my_rank+1)*p; j++) {

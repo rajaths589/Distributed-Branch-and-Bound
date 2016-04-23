@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <omp.h>
+#include <assert.h>
 
 #include "priority_queue.h"
 #include "comforts.h"
@@ -56,17 +57,17 @@ int pq_length(queue* q) {
 	return l;
 }
 
-solution_vector* pq_min_extract(queue* q, float* pr) {
+solution_vector pq_min_extract(queue* q, float* pr) {
 	solution_vector* min_vector;
 
 	LOCK(q);
-	
+
 	if (q->length == 0) {
 		min_vector = NULL;
 	} else {
 		min_vector = q->root_node->partial_solution;
 		*pr = q->root_node->priority;
-		
+
 		queue_head *left, *right;
 		left = q->root_node->left_subtree;
 		right = q->root_node->right_subtree;
@@ -81,7 +82,7 @@ solution_vector* pq_min_extract(queue* q, float* pr) {
 }
 
 //not concurrent
-void pq_insert_nc(queue* q, float priority, solution_vector* partial_solution) {
+void pq_insert_nc(queue* q, float priority, solution_vector partial_solution) {
 	NEW(queue_head, qh);
 
 	qh->priority = priority;
@@ -128,7 +129,7 @@ queue_head* merge_helper(queue_head* q1, queue_head* q2) {
 	if (q1 == NULL)
 		return q2;
 
-	if (q2->priority < q1->priority) {		
+	if (q2->priority < q1->priority) {
 		SWAP(q1, q2);
 	}
 
@@ -167,13 +168,43 @@ queue_head* prune_helper(queue_head* q, float min_bound) {
 			q->length = 1 + q->left_subtree->length;
 		else
 			q->length = 1;
-	}		
+	}
 	else {
 		q->distance = 1 + node_distance(q->right_subtree);
 		q->length = 1 + q->left_subtree->length + q->right_subtree->length;
-	}		
+	}
 
 	return q;
+}
+
+queue_head* extract_helper(queue_head* qh, int num) {
+	queue_head *temp_r, *temp;
+
+	if (MAX(node_length(qh->left_subtree), node_length(qh->right_subtree)) ==
+		node_length(qh->left_subtree)) {
+		if (node_length(qh->left_subtree) == num) {
+			temp_r = qh->left_subtree;
+			qh->left_subtree = NULL;
+		} else {
+			temp_r = extract_helper(qh->left_subtree, num);
+		}
+		} else {
+			if (node_length(qh->right_subtree) == num) {
+				temp_r = qh->right_subtree;
+				qh->right_subtree = NULL;
+			} else {
+				temp_r = extract_helper(qh->right_subtree, num);
+			}
+		}
+
+		if (node_distance(qh->right_subtree) > node_distance(qh->left_subtree)) {
+			SWAP(qh->left_subtree, qh->right_subtree);
+		}
+		qh->distance = MIN(node_distance(qh->left_subtree), node_distance(qh->right_subtree)) +
+		1;
+		qh->length = node_length(qh->left_subtree) + node_distance(qh->right_subtree);
+
+	return temp_r;
 }
 
 queue_head* pq_extract(struct queue* q, int num) {
@@ -189,32 +220,4 @@ queue_head* pq_extract(struct queue* q, int num) {
 	UNLOCK(q);
 
 	return qh;
-}
-
-queue_head* extract_helper(queue_head* qh, int num) {
-	queue_head *temp_r, temp;
-
-	if (MAX(node_length(qh->left_subtree), node_length(qh->right_subtree)) == node_length(qh->left_subtree)) {
-		if (node_length(qh->left_subtree) == num) {
-			temp_r = qh->left_subtree;
-			qh->left_subtree = NULL;
-		} else {
-			temp_r = extract_helper(qh->left_subtree, num);
-		}
-	} else {
-		if (node_length(qh->right_subtree) == num) {
-			temp_r = qh->right_subtree;
-			qh->right_subtree = NULL;
-		} else {
-			temp_r = extract_helper(qh->right_subtree, num);
-		}
-	}
-
-	if (node_distance(q->right_subtree) > node_distance(q->left_subtree)) {
-		SWAP(q->left_subtree, q->right_subtree);
-	}
-	qh->distance = MIN(node_distance(qh->left_subtree), node_distance(qh->right_subtree)) + 1;
-	qh->length = node_length(qh->left_subtree) + node_distance(qh->right_subtree);
-
-	return temp_r;
 }

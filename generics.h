@@ -1,6 +1,8 @@
 #ifndef GENERIC_TEMPLATE_DEFNS
 #define GENERIC_TEMPLATE_DEFNS
 
+#include "priority_queue.h"
+
 typedef void* solution_vector;
 
 void* populate_domain_data(int argc, char** argv);
