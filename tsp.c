@@ -1,14 +1,13 @@
 #include "generics.h"
 #include "comforts.h"
+#include "graph.h"
+#include "bitvector.h"
+#include "priority_queue.h"
 
 #include <stdlib.h>
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-
-#include "graph.h"
-#include "bitvector.h"
-#include "priority_queue.h"
 
 typedef struct tsp_data {
 	graph* g;
@@ -93,7 +92,7 @@ int construct_candidates(solution_vector partial_solution, float partial_soln_sc
 
 	list_node* l;
 	tsp_path* path1;
-	l = data->g->adjacency_list[path->curr_length-1];
+	l = data->g->adjacency_list[partial->curr_length-1];
 
 	if (path->curr_length == data->max_len) {
 
@@ -124,3 +123,11 @@ int construct_candidates(solution_vector partial_solution, float partial_soln_sc
 	return 0;
 }
 
+void print_solution(solution_vector solution, float score) {
+	printf("Solution:\n");
+	for (int i = 0; i < solution->max_length; i++) {
+		printf("%d\t", solution->path[i]);
+	}
+	printf("\n");
+	printf("Cost : %f\n", score);
+}
