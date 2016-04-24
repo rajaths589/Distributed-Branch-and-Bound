@@ -183,3 +183,82 @@ void receive_and_forward_bound() {
 		}
 	}
 }
+
+
+void queue_balancing(int *loads_arr, MPI_Comm current_comm );
+
+void load_balancing(MPI_Comm *load_comm){
+	int stop_flag, share, i, queue_len, flag[5], loads_arr[5];
+	share = 1;
+
+	MPI_Request req_comm[5];
+	MPI_Status status_comm[5];
+
+	for(i=0; i<5; i++){
+		//i=0: I am the Gatherer
+		REPORT_ERROR(MPI_Ibcast(&share, 1, MPI_INT, CENTRE, load_comm[i], &req_comm[i]),
+					"MPI_Ibcast : ERROR\n", );
+	}
+
+	int order[4] = {1,2,3,4};
+
+	while(stop_flag){
+
+		i = 0;
+		REPORT_ERROR(MPI_Test(&req_comm[CENTRE], &flag[CENTRE], &status_comm[CENTRE]),
+					"MPI_Test[CENTRE] : ERROR\n", );
+
+		if(flag[CENTRE]){
+
+			queue_len = getQueueLen();
+
+			REPORT_ERROR(MPI_Gather(&queue_len, 1, MPI_INT, loads_arr, 1, MPI_INT, CENTRE, load_comm[order[i]]),
+				"MPI_Gather : ERROR\n", );
+
+			queue_balancing(loads_arr, load_comm[CENTRE]);
+
+			//EVENTUALLY:
+			REPORT_ERROR(MPI_Ibcast(&share, 1, MPI_INT, CENTRE, load_comm[CENTRE], &req_comm[CENTRE]),
+				"MPI_Ibcast : ERROR\n", );
+
+		}
+
+		random_perm(order, 4);
+
+		for(i=0; i<4; i++){
+
+			REPORT_ERROR(MPI_Test(&req_comm[order[i]], &flag[order[i]], &status_comm[order[i]]),
+					"MPI_Test : ERROR\n", );
+
+			if(flag[order[i]]){
+
+				//DO SOMETHING:
+				queue_len = getQueueLen();
+				REPORT_ERROR(MPI_Gather(&queue_len, 1, MPI_INT, NULL, 0, MPI_INT, CENTRE, load_comm[order[i]]),
+					"MPI_Gather : ERROR\n", );
+
+				queue_balancing(loads_arr, load_comm[order[i]]);
+
+				//EVENTUALLY:
+				REPORT_ERROR(MPI_Ibcast(&share, 1, MPI_INT, CENTRE, load_comm[i], &req_comm[i]),
+					"MPI_Ibcast : ERROR\n", );
+
+			}
+		}
+	}
+}
+
+
+void queue_balancing(int *loads_arr, MPI_Comm current_comm ){
+
+	int my_rank;
+	MPI_Comm_rank(current_comm, &my_rank);
+
+	if(my_rank == CENTRE){
+
+	}
+
+	else {
+
+	}
+}
