@@ -13,3 +13,6 @@ vertex_color: vertex_color.c
 
 leftist_heap.o : leftist_heap.c
 	gcc -g -c -fopenmp leftist_heap.c
+
+solver.o : solver.c
+	gcc -g -c -fopenmp solver.c
