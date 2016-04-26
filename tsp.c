@@ -11,6 +11,7 @@
 #include <mpi.h>
 
 int max_length;
+int solution_vector_size = 0;
 
 typedef struct tsp_data {
 	graph* g;
@@ -54,7 +55,7 @@ void* populate_domain_data(int argc, char** argv) {
 	float weight;
 
 	for (int i = 0; i < num_edges; i++) {
-		fscanf(fp, "%d %d %f", from, to, weight);
+		fscanf(fp, "%d %d %f", &from, &to, &weight);
 		add_edge(g, from, to, weight);
 	}
 
@@ -66,7 +67,7 @@ void* populate_domain_data(int argc, char** argv) {
 	assert(data->start_point >= 0);
 	assert(data->start_point < num_vertices);
 
-	print_graph(stdout, g);
+	solution_vector_size = sizeof(float) + sizeof(int) + (data->max_len+1)*sizeof(int);
 
 	return (void*) data;
 }
@@ -82,6 +83,8 @@ solution_vector get_root_partial_solution(void* domain_specific_data) {
 	empty_solution->path[0] = data->start_point;
 	empty_solution->used_vertices = create_bitvector(data->max_len);
 	setIndex(empty_solution->used_vertices, data->start_point);
+
+	print_solution(empty_solution, 0);
 
 	return (void*) empty_solution;
 }
@@ -132,7 +135,7 @@ void print_solution(solution_vector sol, float score) {
 	tsp_path* solution = (tsp_path*) sol;
 
 	printf("Solution:\n");
-	for (int i = 0; i < solution->max_length; i++) {
+	for (int i = 0; i < solution->curr_length; i++) {
 		printf("%d\t", solution->path[i]);
 	}
 	printf("\n");

@@ -1,6 +1,8 @@
 #ifndef GRAPH_ADT_DEFN
 #define GRAPH_ADT_DEFN
 
+#include <stdio.h>
+
 struct list_node {
 	struct list_node* next;
 	int to;
@@ -21,6 +23,6 @@ graph* create_graph(int vertices);
 void destroy_graph(graph* g);
 void add_edge(graph* g, int from, int to, float weight);
 
-void print_graph(graph* g);
+void print_graph(FILE* fp, graph* g);
 
 #endif

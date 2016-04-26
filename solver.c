@@ -14,6 +14,7 @@
 #define SYN_TAG 11
 #define SYN_ACK_TAG 22
 #define DATA_TAG 33
+#define INIT_LOAD_TAG 44
 
 #define NUM_THREADS 9
 
@@ -23,15 +24,17 @@ queue* shared_queue;
 
 int err = 0;
 int my_rank;
+int world_size;
 int X_LIM;
 int Y_LIM;
 int end_program = 0;
 
 void queue_balancing(int neighbor_rank, int my_queue_len, int neighbour_queue_len);
-void expand_partial_solution(queue* shared_queue, queue* private_queue, void* domain_data);
+void expand_partial_solution(queue* private_queue, void* domain_data);
 MPI_Comm* create_topology();
 void setupCommunicators();
 void load_balancing();
+int initializeLoad(void* domain_data);
 
 enum CommNum {
 	CENTRE,
@@ -42,17 +45,17 @@ enum CommNum {
 	DUMMY
 };
 
-// typedef struct bound_comm {
-// 	float new_bound;
-// 	int start_rank;
-// } bound_comm;
-//
-// MPI_Datatype bound_comm_t;
+typedef struct bound_comm {
+	float new_bound;
+	int start_rank;
+} bound_comm;
 
-// omp_lock_t best_solution_lock;
-// int best_score_changed = 0;
-// float best_score = FLT_MAX;
-// solution_vector best_solution;
+MPI_Datatype bound_comm_t;
+
+omp_lock_t best_solution_lock;
+int best_score_changed = 0;
+float best_score = FLT_MAX;
+solution_vector best_solution;
 MPI_Comm torus;
 int neighbors_rank[5];
 int stop_flag = 0;
@@ -65,6 +68,8 @@ int main(int argc, char** argv) {
 	MPI_Comm_rank(torus, &my_rank);
 	srand(time(NULL));
 
+	omp_init_lock(&best_solution_lock);
+
 	void* domain_data = populate_domain_data(argc, argv);
 
 	shared_queue = create_queue();
@@ -73,7 +78,7 @@ int main(int argc, char** argv) {
 		can_work[i] = 0;
 	}
 
-// 	initializeLoad(domain_data);
+	initializeLoad(domain_data);
 // 	load_balancing();
 
 	MPI_Finalize();
@@ -82,7 +87,6 @@ int main(int argc, char** argv) {
 }
 
 void setupCommunicators() {
-	int world_size;
 
 	MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
@@ -147,32 +151,32 @@ MPI_Comm* create_topology() {
 	return mesh;
 }
 
-// void expand_partial_solution(queue*  private_queue, void* domain_data) {
-// 	float score;
-// 	solution_vector partial_solution = pq_min_extract(shared_queue, &score);
-//
-// 	if (partial_solution != NULL) {
-// 		if (construct_candidates(partial_solution, score, private_queue, domain_data)) {
-// 			int flag = 0;
-//
-// 		omp_set_lock(&best_solution_lock);
-// 			if (score < best_score) {
-// 				best_score = score;
-// 				best_solution = partial_solution;
-// 				best_score_changed++;
-// 			flag = 1;
-// 		}
-// 		omp_unset_lock(&best_solution_lock);
-//
-// 			if (flag) {
-// 				pq_prune(shared_queue, score);
-// 			}
-// 		} else {
-// 			pq_prune(private_queue, best_score);
-// 			pq_merge(shared_queue, private_queue);
-// 		}
-// 	}
-// }
+void expand_partial_solution(queue*  private_queue, void* domain_data) {
+	float score;
+	solution_vector partial_solution = pq_min_extract(shared_queue, &score);
+
+	if (partial_solution != NULL) {
+		if (construct_candidates(partial_solution, score, private_queue, domain_data)) {
+			int flag = 0;
+
+		omp_set_lock(&best_solution_lock);
+			if (score < best_score) {
+				best_score = score;
+				best_solution = partial_solution;
+				best_score_changed++;
+			flag = 1;
+		}
+		omp_unset_lock(&best_solution_lock);
+
+			if (flag) {
+				pq_prune(shared_queue, score);
+			}
+		} else {
+			pq_prune(private_queue, best_score);
+			pq_merge(shared_queue, private_queue);
+		}
+	}
+}
 
 int getQueueLen() {
 	return rand()%100;
@@ -470,67 +474,67 @@ void unpack_array(queue* q, void* outbuff, int buff_size, int len, int* pos,
 
 }
 
-// int initializeLoad(void* domain_data) {
-// 	if (my_rank == 0) {
-// 		pq_insert_nc(shared_queue, 0.0,
-// 					 get_root_partial_solution(domain_data));
-//
-// 		#pragma omp parallel num_threads(NUM_THREADS)
-// 		{
-// 			queue* priv_queue = create_queue();
-// 			while (pq_length(shared_queue) < X_LIM*Y_LIM) {
-// 				expand_partial_solution(priv_queue, domain_data);
-//
-// 				#pragma omp barrier
-// 				if (pq_length(shared_queue) == 0) {
-// 					end_program = 1;
-// 					break;
-// 				}
-// 			}
-// 		}
-//
-// 		if (end_program) {
-// 			for (int i = 1; i < world_size; i++) {
-// 				MPI_Send(&end_program, 1, MPI_INT, i, INIT_LOAD_TAG, torus);
-// 			}
-// 			// cleanup and shutdown
-// 			return 1;
-// 		} else {
-// 			queue_head* qh;
-// 			int pos;
-// 			void* outbuff = malloc(solution_vector_size);
-//
-// 			for (int i = 1; i < world_size; i++) {
-// 				qh = pq_extract(shared_queue, 1);
-// 				pack_array(qh, outbuff, solution_vector_size, &pos, torus, problem_data);
-//
-// 				MPI_Send(&end_program, 1, MPI_INT, i, INIT_LOAD_TAG, torus);
-// 				MPI_Send(outbuff, buff_size, MPI_PACKED, i, INIT_LOAD_TAG, torus);
-// 			}
-//
-// 			free(outbuff);
-//
-// 			return 0;
-// 		}
-// 	} else {
-// 		int len;
-//
-// 		MPI_Recv(&end_program, 1, MPI_INT, 0, INIT_LOAD_TAG, torus, MPI_STATUS_IGNORE);
-//
-// 		if (end_program) {
-// 			return 1;
-// 		} else {
-// 			float score;
-// 			int pos = 0;
-// 			void* outbuff = malloc(solution_vector_size);
-// 			MPI_Recv(outbuff, solution_vector_size, MPI_PACKED, 0, INIT_LOAD_TAG, torus,
-// 					 MPI_STATUS_IGNORE);
-// 			unpack_array(shared_queue, outbuff, solution_vector_size, 1, &pos,
-// 						 problem_data);
-//
-// 			free(outbuff);
-//
-// 			return 0;
-// 		}
-// 	}
-// }
+int initializeLoad(void* domain_data) {
+	if (my_rank == 0) {
+		pq_insert_nc(shared_queue, 0.0,
+					 get_root_partial_solution(domain_data));
+
+		#pragma omp parallel num_threads(NUM_THREADS)
+		{
+			queue* priv_queue = create_queue();
+			while (pq_length(shared_queue) < X_LIM*Y_LIM) {
+				expand_partial_solution(priv_queue, domain_data);
+
+				#pragma omp barrier
+				if (pq_length(shared_queue) == 0) {
+					end_program = 1;
+					break;
+				}
+			}
+		}
+
+		if (end_program) {
+			for (int i = 1; i < world_size; i++) {
+				MPI_Send(&end_program, 1, MPI_INT, i, INIT_LOAD_TAG, torus);
+			}
+			// cleanup and shutdown
+			return 1;
+		} else {
+			queue_head* qh;
+			int pos;
+			void* outbuff = malloc(solution_vector_size);
+
+			for (int i = 1; i < world_size; i++) {
+				qh = pq_extract(shared_queue, 1);
+				pack_array(qh, outbuff, solution_vector_size, &pos, domain_data);
+
+				MPI_Send(&end_program, 1, MPI_INT, i, INIT_LOAD_TAG, torus);
+				MPI_Send(outbuff, solution_vector_size, MPI_PACKED, i, INIT_LOAD_TAG, torus);
+			}
+
+			free(outbuff);
+
+			return 0;
+		}
+	} else {
+		int len;
+
+		MPI_Recv(&end_program, 1, MPI_INT, 0, INIT_LOAD_TAG, torus, MPI_STATUS_IGNORE);
+
+		if (end_program) {
+			return 1;
+		} else {
+			float score;
+			int pos = 0;
+			void* outbuff = malloc(solution_vector_size);
+			MPI_Recv(outbuff, solution_vector_size, MPI_PACKED, 0, INIT_LOAD_TAG, torus,
+					 MPI_STATUS_IGNORE);
+			unpack_array(shared_queue, outbuff, solution_vector_size, 1, &pos,
+						 domain_data);
+
+			free(outbuff);
+
+			return 0;
+		}
+	}
+}
