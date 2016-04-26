@@ -15,4 +15,4 @@ leftist_heap.o : leftist_heap.c
 	gcc -g -c -fopenmp leftist_heap.c
 
 solver.o : solver.c
-	gcc -g -c -fopenmp solver.c
+	mpicc -g -fopenmp -lm solver.c

@@ -15,8 +15,7 @@ struct queue {
 };
 
 struct queue_head {
-
-	float priority;			// float for generality or int sufficient for our purpose ?
+	float priority;	// float for generality or int sufficient for our purpose ?
 	solution_vector partial_solution;
 
 	int distance;

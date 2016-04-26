@@ -1,12 +1,20 @@
-#include <omp.h>
-#include <mpi.h>
 #include <float.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <math.h>
+#include <time.h>
+
+#include <omp.h>
+#include <mpi.h>
 
 #include "priority_queue.h"
 #include "generics.h"
 #include "comforts.h"
+
+#define SYN_TAG 11
+#define SYN_ACK_TAG 22
+#define DATA_TAG 33
+
 
 int err = 0;
 int my_rank;
@@ -27,6 +35,13 @@ solution_vector best_solution;
 MPI_Comm neighbors_comm[5];
 MPI_Comm torus;
 int neighbors_rank[5];
+int stop_flag = 0;
+
+void queue_balancing(int neighbor_rank, int my_queue_len, int neighbour_queue_len);
+void expand_partial_solution(queue* shared_queue, queue* private_queue, void* domain_data);
+MPI_Comm* create_topology();
+void setupCommunicators();
+void load_balancing();
 
 enum CommNum {
 	CENTRE,
@@ -40,14 +55,16 @@ enum CommNum {
 int main(int argc, char** argv) {
 	MPI_Init(&argc, &argv);
 
-	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
-
 	setupCommunicators();
+	MPI_Comm_rank(torus, &my_rank);
+	srand(time(NULL));
+
+	load_balancing();
 
 	MPI_Finalize();
 
 	return 0;
-		}
+}
 
 void setupCommunicators() {
 	int world_size;
@@ -57,69 +74,42 @@ void setupCommunicators() {
 	X_LIM = 1;
 	Y_LIM = world_size;
 
-	for (int i = ((int) sqrt(world_size); i > 1; i--) {
+	for (int i = ((int) sqrt(world_size)); i > 1; i--) {
 		if (world_size % i == 0) {
 			X_LIM = i;
 			Y_LIM = world_size/X_LIM;
 			break;
+		}
+	}
+
+	int rank;
+	torus = *(create_topology());
+	MPI_Comm_rank(torus, &rank);
+	int coords[2], cur_coords[2];
+
+	REPORT_ERROR(MPI_Cart_coords(torus, rank, 2, coords), "MPI_Cart_coords: ERROR\n", );
+	int coords_ptr[5][2];
+
+	coords_ptr[CENTRE][0] = coords[0];
+	coords_ptr[CENTRE][1] = coords[1];
+	coords_ptr[LEFT][0]  = coords[0];
+	coords_ptr[LEFT][1]  = (coords[1] - 1);
+	coords_ptr[RIGHT][0] = coords[0];
+	coords_ptr[RIGHT][1] = (coords[1] + 1);
+	coords_ptr[UP][0]    = (coords[0] - 1);
+	coords_ptr[UP][1]    = coords[1];
+	coords_ptr[DOWN][0]  = (coords[0] + 1);
+	coords_ptr[DOWN][1]   = coords[1];
+
+	for (int i = 0; i < 5; i++) {
+		if ((coords_ptr[i][0] >= 0 && coords_ptr[i][0] < X_LIM) &&
+			(coords_ptr[i][1] >= 0 && coords_ptr[i][1] < Y_LIM)) {
+			MPI_Cart_rank(torus, coords_ptr[i], &neighbors_rank[i]);
+		} else {
+			neighbors_rank[i] = -1;
+		}
 	}
 }
-
-	*torus = create_topology();
-	int coords[2];
-
-	REPORT_ERROR(MPI_Cart_coords(torus, my_rank, 2, coords), "MPI_Cart_coords: ERROR\n", 1);
-	int my_color, new_rank, coords_ptr[5][2];
-	enum CommNum curr_com;
-
-	for (int i = 0; i < world_size; i++) {
-		MPI_Cart_coords(torus, i, 2, cur_coords);
-
-		coords_ptr[LEFT][0]  = cur_coords[0];
-		coords_ptr[LEFT][1]  = (cur_coords[1] - 1)%Y_LIM;
-		coords_ptr[RIGHT][0] = cur_coords[0];
-		coords_ptr[RIGHT][1] = (cur_coords[1] + 1)%Y_LIM;
-		coords_ptr[UP][0]    = (cur_coords[0] - 1)%X_LIM;
-		coords_ptr[UP][1]    = cur_coords[1];
-		coords_ptr[DOWN][0]  = (cur_coords[0] + 1)%X_LIM;
-		coords_ptr[DOWN][1]   = cur_coords[1];
-
-		MPI_Cart_rank(*mesh, coords_ptr[LEFT], &neighbors_rank[LEFT]);
-		MPI_Cart_rank(*mesh, coords_ptr[RIGHT], &neighbors_rank[RIGHT]);
-		MPI_Cart_rank(*mesh, coords_ptr[UP], &neighbors_rank[UP]);
-		MPI_Cart_rank(*mesh, coords_ptr[DOWN], &neighbors_rank[DOWN]);
-		neighbors_rank[CENTRE] = i;
-
-		if(my_rank == i) {
-			my_color = 1;
-			curr_comm = CENTRE;
-			new_rank = CENTRE;
-		} else if(rmy_rankank == neighbors_rank[LEFT]) {
-			my_color = 1;
-			curr_comm = RIGHT;
-			new_rank = LEFT;
-		} else if(my_rank == neighbors_rank[RIGHT]) {
-			my_color = 1;
-			curr_comm = LEFT;
-			new_rank = RIGHT;
-		} else if(my_rank == neighbors_rank[UP]) {
-			my_color = 1;
-			curr_comm = DOWN;
-			new_rank = UP;
-		} else if(my_rank == neighbors_rank[DOWN]) {
-			my_color = 1;
-			curr_comm = UP;
-			new_rank = DOWN;
-		} else {
-			my_color = MPI_UNDEFINED;
-			curr_comm = DUMMY;
-			new_rank = DUMMY;
-		}
-
-		REPORT_ERROR(MPI_Comm_split(torus, my_color, new_rank, &neighbors_comm[curr_comm]),
-					 "MPI_Comm_split : ERROR\n", 1);
-		}
-	}
 
 MPI_Comm* create_topology() {
 	MPI_Comm *mesh = (MPI_Comm *) malloc(sizeof(MPI_Comm));
@@ -130,8 +120,8 @@ MPI_Comm* create_topology() {
 	dim_sz[0] = X_LIM;
 	dim_sz[1] = Y_LIM;
 
-	periodic[0] = 1;
-	periodic[1] = 1;
+	periodic[0] = 0;
+	periodic[1] = 0;
 
 	int reorder = 1;
 
@@ -140,111 +130,167 @@ MPI_Comm* create_topology() {
 			  NULL);
 
 	return mesh;
+}
+
+// void expand_partial_solution(queue* shared_queue, queue* private_queue, void* domain_data) {
+// 	float score;
+// 	solution_vector partial_solution = pq_min_extract(shared_queue, &score);
+//
+// 	if (partial_solution != NULL) {
+// 		if (construct_candidates(partial_solution, score, private_queue, domain_data)) {
+// 			int flag = 0;
+//
+// 		omp_set_lock(&best_solution_lock);
+// 			if (score < best_score) {
+// 				best_score = score;
+// 				best_solution = partial_solution;
+// 				best_score_changed++;
+// 			flag = 1;
+// 		}
+// 		omp_unset_lock(&best_solution_lock);
+//
+// 			if (flag) {
+// 				pq_prune(shared_queue, score);
+// 			}
+// 		} else {
+// 			pq_prune(private_queue, best_score);
+// 			pq_merge(shared_queue, private_queue);
+// 		}
+// 	}
+// }
+
+int getQueueLen() {
+	return rand()%100;
+}
+
+void random_perm(int* order, int len) {
+	int temp;
+	int a, b;
+	for (int i = 0; i < len; i++) {
+		a = rand()%len;
+		b = rand()%len;
+		SWAP(order[a], order[b]);
+	}
+}
+
+void load_balancing() {
+	int syn_share = 1;
+	int syn_receive;
+	int syn_ack_receive;
+	int syn_ack_send = 1;
+	int recv_queue_len;
+	int send_queue_len;
+	int flag = 0;
+
+	MPI_Request syn_request_right, syn_request_down;
+	MPI_Request syn_ack_right, syn_ack_down;
+	MPI_Request syn_receive_left, syn_receive_up;
+
+	if (neighbors_rank[RIGHT] != -1) {
+		MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[RIGHT], SYN_TAG, torus,
+					&syn_request_right);
+	}
+	if (neighbors_rank[DOWN] != -1) {
+		MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[DOWN], SYN_TAG,
+				torus, &syn_request_down);
 	}
 
-void expand_partial_solution(queue* shared_queue, queue* private_queue, void* domain_data) {
-	float score;
-	solution_vector partial_solution = pq_min_extract(shared_queue, &score);
+	if (neighbors_rank[LEFT] != -1) {
+		MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG, torus,
+					&syn_receive_left);
+	}
 
-	if (partial_solution != NULL) {
-		if (construct_candidates(partial_solution, score, private_queue, domain_data)) {
-			int flag = 0;
+	if (neighbors_rank[UP] != -1) {
+		MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[UP], SYN_TAG, torus,
+				  &syn_receive_up);
+	}
 
-		omp_set_lock(&best_solution_lock);
-			if (score < best_score) {
-				best_score = score;
-				best_solution = partial_solution;
-				best_score_changed++;
-			flag = 1;
+	if (neighbors_rank[RIGHT] != -1) {
+		MPI_Irecv(&syn_ack_receive, 1, MPI_INT, neighbors_rank[RIGHT], SYN_ACK_TAG, torus,
+				  &syn_ack_right);
+	}
+
+	if (neighbors_rank[DOWN] != -1) {
+		MPI_Irecv(&syn_ack_receive, 1, MPI_INT, neighbors_rank[DOWN], SYN_ACK_TAG, torus,
+				  &syn_ack_down);
+	}
+
+	while (!stop_flag) {
+		if (neighbors_rank[LEFT] != -1) {
+			MPI_Test(&syn_receive_left, &flag, MPI_STATUS_IGNORE);
+
+			if (flag == 1) {
+				MPI_Send(&syn_ack_send, 1, MPI_INT, neighbors_rank[LEFT], SYN_ACK_TAG, torus);
+				MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[LEFT], DATA_TAG, torus,
+						 MPI_STATUS_IGNORE);
+				send_queue_len = getQueueLen();
+				MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[LEFT], DATA_TAG, torus);
+				queue_balancing(neighbors_rank[LEFT], send_queue_len, recv_queue_len);
+
+				MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG,
+						  torus, &syn_receive_left);
+			}
 		}
-		omp_unset_lock(&best_solution_lock);
+
+		if (neighbors_rank[UP] != -1) {
+			MPI_Test(&syn_receive_up, &flag, MPI_STATUS_IGNORE);
 
 			if (flag) {
-				pq_prune(shared_queue, score);
+				MPI_Send(&syn_ack_send, 1, MPI_INT, neighbors_rank[UP], SYN_ACK_TAG, torus);
+				MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[UP], DATA_TAG, torus,
+						 MPI_STATUS_IGNORE);
+				send_queue_len = getQueueLen();
+				MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[UP], DATA_TAG, torus);
+				queue_balancing(neighbors_rank[UP], send_queue_len, recv_queue_len);
+
+				MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[UP], SYN_TAG,
+						  torus, &syn_receive_up);
 			}
-		} else {
-			pq_prune(private_queue, best_score);
-			pq_merge(shared_queue, private_queue);
-		}
-	}
-}
-
-void queue_balancing(int *loads_arr, MPI_Comm current_comm );
-
-void load_balancing(MPI_Comm *load_comm){
-	int stop_flag, share, i, queue_len, flag[5], loads_arr[5];
-	share = 1;
-
-	MPI_Request req_comm[5];
-	MPI_Status status_comm[5];
-
-	for(i=0; i<5; i++){
-		//i=0: I am the Gatherer
-		REPORT_ERROR(MPI_Ibcast(&share, 1, MPI_INT, CENTRE, load_comm[i], &req_comm[i]),
-					"MPI_Ibcast : ERROR\n", );
-	}
-
-	int order[4] = {1,2,3,4};
-
-	while(stop_flag){
-
-		i = 0;
-		REPORT_ERROR(MPI_Test(&req_comm[CENTRE], &flag[CENTRE], &status_comm[CENTRE]),
-					"MPI_Test[CENTRE] : ERROR\n", );
-
-		if(flag[CENTRE]){
-
-			queue_len = getQueueLen();
-
-			REPORT_ERROR(MPI_Gather(&queue_len, 1, MPI_INT, loads_arr, 1, MPI_INT, CENTRE, load_comm[order[i]]),
-				"MPI_Gather : ERROR\n", );
-
-			queue_balancing(loads_arr, load_comm[CENTRE]);
-
-			//EVENTUALLY:
-			REPORT_ERROR(MPI_Ibcast(&share, 1, MPI_INT, CENTRE, load_comm[CENTRE], &req_comm[CENTRE]),
-				"MPI_Ibcast : ERROR\n", );
-
 		}
 
-		random_perm(order, 4);
+		if (neighbors_rank[RIGHT] != -1) {
+			MPI_Test(&syn_ack_right, &flag, MPI_STATUS_IGNORE);
 
-		for(i=0; i<4; i++){
+			if (flag) {
+				send_queue_len = getQueueLen();
+				MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[RIGHT], DATA_TAG, torus);
+				MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[RIGHT], DATA_TAG, torus,
+						 MPI_STATUS_IGNORE);
 
-			REPORT_ERROR(MPI_Test(&req_comm[order[i]], &flag[order[i]], &status_comm[order[i]]),
-					"MPI_Test : ERROR\n", );
+				queue_balancing(neighbors_rank[RIGHT], send_queue_len, recv_queue_len);
 
-			if(flag[order[i]]){
+				MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[RIGHT], SYN_TAG, torus,
+						&syn_request_right);
+				MPI_Irecv(&syn_ack_receive, 1, MPI_INT, neighbors_rank[RIGHT], SYN_ACK_TAG,
+						  torus, &syn_ack_right);
+			}
+		}
 
-				//DO SOMETHING:
-				queue_len = getQueueLen();
-				REPORT_ERROR(MPI_Gather(&queue_len, 1, MPI_INT, NULL, 0, MPI_INT, CENTRE, load_comm[order[i]]),
-					"MPI_Gather : ERROR\n", );
+		if (neighbors_rank[DOWN] != -1) {
+			MPI_Test(&syn_ack_down, &flag, MPI_STATUS_IGNORE);
 
-				queue_balancing(loads_arr, load_comm[order[i]]);
+			if (flag) {
+				send_queue_len = getQueueLen();
+				MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[DOWN], DATA_TAG, torus);
+				MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[DOWN], DATA_TAG, torus,
+						 MPI_STATUS_IGNORE);
 
-				//EVENTUALLY:
-				REPORT_ERROR(MPI_Ibcast(&share, 1, MPI_INT, CENTRE, load_comm[i], &req_comm[i]),
-					"MPI_Ibcast : ERROR\n", );
+				queue_balancing(neighbors_rank[DOWN], send_queue_len, recv_queue_len);
 
+				MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[DOWN], SYN_TAG,
+						  torus, &syn_request_down);
+				MPI_Irecv(&syn_ack_receive, 1, MPI_INT, neighbors_rank[DOWN], SYN_ACK_TAG,
+						  torus, &syn_ack_down);
 			}
 		}
 	}
 }
 
 
-void queue_balancing(int *loads_arr, MPI_Comm current_comm ){
+void queue_balancing(int neighbor_rank, int my_queue_len, int neighbour_queue_len) {
+	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
+			neighbor_rank, my_queue_len, neighbour_queue_len);
 
-	int my_rank;
-	MPI_Comm_rank(current_comm, &my_rank);
-
-	if(my_rank == CENTRE){
-
-	}
-
-	else {
-
-	}
 }
 
 // void send_bound() {
