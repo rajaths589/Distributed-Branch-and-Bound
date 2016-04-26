@@ -8,6 +8,12 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <mpi.h>
+
+#define LOAD_SHARE_TAG 7
+
+int max_length;
+
 
 typedef struct tsp_data {
 	graph* g;
@@ -130,4 +136,39 @@ void print_solution(solution_vector solution, float score) {
 	}
 	printf("\n");
 	printf("Cost : %f\n", score);
+}
+
+void send_load(tsp_path* data, double score, int reciever, MPI_Comm comm) {
+
+	int size_buff = (int) (sizeof(double) + (max_length + 2)*sizeof(int));
+	void* buff = (void *) malloc(size_buff);
+
+	/* PACK */
+	int pos = 0;
+	MPI_Pack(&score,                      1, MPI_DOUBLE, buff, size_buff, &pos, comm);
+	MPI_Pack(&data->curr_length,          1, MPI_INT   , buff, size_buff, &pos, comm);
+	MPI_Pack(data->path ,        max_length, MPI_INT   , buff, size_buff, &pos, comm);
+
+	MPI_Send(buff, size_buff, MPI_PACKED, reciever, LOAD_SHARE_TAG, comm);
+
+}
+
+tsp_path* recv_load(double* score_ptr, int sender, MPI_Comm comm) {
+	MPI_Status recv_stat;
+	int size_buff = (int) (sizeof(double) + (max_length + 2)*sizeof(int));
+	void* buff = (void *) malloc(size_buff);
+
+	tsp_path* data = (tsp_path *) malloc(sizeof(tsp_path));
+	data->path = (int *) malloc(max_length * sizeof(int));
+	data->max_length = max_length;
+
+	MPI_Recv(buff, size_buff, MPI_PACKED,  sender, LOAD_SHARE_TAG, comm, &recv_stat);
+
+	/* UNPACK */
+	int pos = 0;
+	MPI_Unpack(buff, size_buff, &pos, score_ptr,                    1, MPI_DOUBLE, comm);
+	MPI_Unpack(buff, size_buff, &pos, &data->curr_length,           1, MPI_INT   , comm);
+	MPI_Unpack(buff, size_buff, &pos, data->path,          max_length, MPI_INT   , comm);
+
+	return data;
 }
