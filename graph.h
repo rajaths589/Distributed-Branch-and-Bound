@@ -15,9 +15,12 @@ struct graph {
 };
 
 typedef struct graph graph;
+typedef struct list_node list_node;
 
 graph* create_graph(int vertices);
 void destroy_graph(graph* g);
 void add_edge(graph* g, int from, int to, float weight);
+
+void print_graph(graph* g);
 
 #endif

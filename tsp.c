@@ -10,10 +10,7 @@
 #include <string.h>
 #include <mpi.h>
 
-#define LOAD_SHARE_TAG 7
-
 int max_length;
-
 
 typedef struct tsp_data {
 	graph* g;
@@ -32,7 +29,7 @@ typedef struct bound_array tsp_path;
 
 tsp_path* create_soln_copy(tsp_path* p) {
 	NEW(tsp_path, p1);
-	p1->curr_length = p;
+	p1->curr_length = p->curr_length;
 	p1->max_length = p->max_length;
 	p1->path = calloc(p1->max_length, sizeof(int));
 	memcpy(p1->path, p->path, p1->max_length);
@@ -64,10 +61,12 @@ void* populate_domain_data(int argc, char** argv) {
 	data->g = g;
 	data->max_len = g->num_vertices;
 
-	fscanf(fp, "%d", g->start_point);
+	fscanf(fp, "%d", data->start_point);
 
-	assert(g->start_point >= 0);
-	assert(g->start_point < num_vertices);
+	assert(data->start_point >= 0);
+	assert(data->start_point < num_vertices);
+
+	print_graph(stdout, g);
 
 	return (void*) data;
 }
@@ -93,14 +92,14 @@ int construct_candidates(solution_vector partial_solution, float partial_soln_sc
 	tsp_path* partial = (tsp_path*) partial_solution;
 	tsp_data* data = (tsp_data*) domain_specific_data;
 
-	if (path->curr_length == data->max_len+1)
+	if (partial->curr_length == data->max_len+1)
 		return 1;
 
 	list_node* l;
 	tsp_path* path1;
 	l = data->g->adjacency_list[partial->curr_length-1];
 
-	if (path->curr_length == data->max_len) {
+	if (partial->curr_length == data->max_len) {
 
 		while (l != NULL) {
 			if (l->to == data->start_point) {
@@ -129,7 +128,9 @@ int construct_candidates(solution_vector partial_solution, float partial_soln_sc
 	return 0;
 }
 
-void print_solution(solution_vector solution, float score) {
+void print_solution(solution_vector sol, float score) {
+	tsp_path* solution = (tsp_path*) sol;
+
 	printf("Solution:\n");
 	for (int i = 0; i < solution->max_length; i++) {
 		printf("%d\t", solution->path[i]);
@@ -138,37 +139,33 @@ void print_solution(solution_vector solution, float score) {
 	printf("Cost : %f\n", score);
 }
 
-void send_load(tsp_path* data, double score, int reciever, MPI_Comm comm) {
-
-	int size_buff = (int) (sizeof(double) + (max_length + 2)*sizeof(int));
-	void* buff = (void *) malloc(size_buff);
-
-	/* PACK */
-	int pos = 0;
-	MPI_Pack(&score,                      1, MPI_DOUBLE, buff, size_buff, &pos, comm);
-	MPI_Pack(&data->curr_length,          1, MPI_INT   , buff, size_buff, &pos, comm);
-	MPI_Pack(data->path ,        max_length, MPI_INT   , buff, size_buff, &pos, comm);
-
-	MPI_Send(buff, size_buff, MPI_PACKED, reciever, LOAD_SHARE_TAG, comm);
-
+int safe_solution_buffer_size(tsp_data* data) {
+	return (data->max_len+1)*sizeof(int) + sizeof(float) + sizeof(int);
 }
 
-tsp_path* recv_load(double* score_ptr, int sender, MPI_Comm comm) {
-	MPI_Status recv_stat;
-	int size_buff = (int) (sizeof(double) + (max_length + 2)*sizeof(int));
-	void* buff = (void *) malloc(size_buff);
+//buff size will be decided in consultation with user
+void pack_solution(void* buff, int buff_size, int* pos, solution_vector vec, float score,
+				   MPI_Comm comm, void* problem_data) {
 
-	tsp_path* data = (tsp_path *) malloc(sizeof(tsp_path));
-	data->path = (int *) malloc(max_length * sizeof(int));
-	data->max_length = max_length;
+	tsp_path* path = (tsp_path*) vec;
 
-	MPI_Recv(buff, size_buff, MPI_PACKED,  sender, LOAD_SHARE_TAG, comm, &recv_stat);
+	MPI_Pack(&score, 1, MPI_FLOAT, buff, buff_size, pos, comm);
+	MPI_Pack(&path->curr_length, 1, MPI_INT, buff, buff_size, pos, comm);
+	MPI_Pack(path->path, path->max_length, MPI_INT, buff, buff_size, pos, comm);
+}
 
-	/* UNPACK */
-	int pos = 0;
-	MPI_Unpack(buff, size_buff, &pos, score_ptr,                    1, MPI_DOUBLE, comm);
-	MPI_Unpack(buff, size_buff, &pos, &data->curr_length,           1, MPI_INT   , comm);
-	MPI_Unpack(buff, size_buff, &pos, data->path,          max_length, MPI_INT   , comm);
+solution_vector unpack_solution(void* buff, int buff_size, MPI_Comm comm, int* pos, float*
+score,
+						void* problem_data) {
 
-	return data;
+	tsp_path* p = (tsp_path*) get_root_partial_solution(problem_data);
+	MPI_Unpack(buff, buff_size, pos, score, 1, MPI_FLOAT, comm);
+	MPI_Unpack(buff, buff_size, pos, &p->curr_length, 1, MPI_INT, comm);
+	MPI_Unpack(buff, buff_size, pos, &p->path, p->max_length, MPI_INT, comm);
+
+	//populate bitvector
+	for (int i = 0; i < p->curr_length; i++)
+		setIndex(p->used_vertices, p->path[i]);
+
+	return (solution_vector) p;
 }

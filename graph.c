@@ -1,6 +1,8 @@
 #include "graph.h"
+#include "comforts.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <assert.h>
 
 graph* create_graph(int vertices) {
@@ -16,7 +18,7 @@ void destroy_graph(graph* g) {
 	if (g == NULL)
 		return;
 
-	list_node* l, l1;
+	list_node* l, *l1;
 
 	for (int i = 0; i < g->num_vertices; i++) {
 		l = g->adjacency_list[i];
@@ -62,4 +64,15 @@ void add_edge(graph* g, int from, int to, float weight) {
 	}
 
 	g->num_edges ++;
+}
+
+void print_graph(FILE* fp, graph* g) {
+	list_node* l;
+	for (int i = 0; i < g->num_vertices; i++) {
+		l = g->adjacency_list[i];
+		while (l != NULL) {
+			fprintf(fp, "%d %d %f\n", l->from, l->to, l->weight);
+			l = l->next;
+		}
+	}
 }
