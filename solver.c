@@ -21,6 +21,8 @@
 #define TERM_ROUND_2 77
 #define TERM_KILL_TAG 88
 
+#define TERMINATION_CONDITION 4
+
 #define NUM_THREADS 3
 
 #define MIN_NULL_FLAG_LOAD_BAL 5
@@ -39,6 +41,7 @@ int Y_LIM;
 int end_program = 0;
 int in_loadbal = 0;
 int i_stopped_chain;
+int bothzero_loadbal = 0;
 
 enum CommNum {
 	CENTRE,
@@ -64,6 +67,10 @@ void load_balancing();
 void loadbal_recipient(enum CommNum direc);
 void loadbal_initiator(enum CommNum direc);
 int initializeLoad(void* domain_data);
+int calculate_next_rank();
+int calculate_prev_rank();
+void termination_init();
+int termination_detection(int);
 
 MPI_Datatype bound_comm_t;
 
@@ -131,6 +138,8 @@ int main(int argc, char** argv) {
 			int syn_receive, syn_ack_receive, syn_share=1;
 			MPI_Request syn_request_down, syn_request_right;
 			MPI_Request syn_receive_left, syn_receive_up, syn_ack_right, syn_ack_down;
+			MPI_Request termination_request;
+			int termination_token;
 
 			if (neighbors_rank[LEFT] != -1) {
 				MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG, torus,
@@ -142,7 +151,13 @@ int main(int argc, char** argv) {
 							&syn_receive_up);
 			}
 
+			if (my_rank != 0) {
+				MPI_Irecv(&termination_token, 1, MPI_INT, calculate_prev_rank(), TERM_INIT_TAG, torus,
+						  &termination_request);
+			}
+
 			while (!end_program) {
+// 				printf("RANK:%d QUEUE_LEN:%d\n", my_rank, pq_length(shared_queue));
 				bound_send_flag = 0;
 				omp_set_lock(&best_solution_lock);
 				if (best_score_changed > 0) {
@@ -195,6 +210,24 @@ int main(int argc, char** argv) {
 					}
 				}
 
+				if (my_rank==0 && bothzero_loadbal >= TERMINATION_CONDITION && !in_loadbal) {
+					termination_init();
+				}
+
+				if (my_rank != 0) {
+					MPI_Test(&termination_request, &flag, MPI_STATUS_IGNORE);
+					if (flag) {
+						if (termination_detection(termination_token)) {
+							//TODO: cleanup and exit.
+							end_program = 1;
+							break;
+						} else {
+							MPI_Irecv(&termination_token, 1, MPI_INT, calculate_prev_rank(), TERM_INIT_TAG, torus,
+									  &termination_request);
+						}
+					}
+				}
+
 				if (!in_loadbal && null_flag >= MIN_NULL_FLAG_LOAD_BAL) {
 					//do load_balancing
 
@@ -223,14 +256,14 @@ int main(int argc, char** argv) {
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[RIGHT], SYN_TAG,
 								  torus, &syn_request_right);
 						MPI_Irecv(&syn_ack_receive, 1, MPI_INT,
-									neighbors_rank[RIGHT],SYN_ACK_TAG,torus, &syn_ack_right);
+									neighbors_rank[RIGHT], SYN_ACK_TAG,torus, &syn_ack_right);
 					}
 					if (neighbors_rank[DOWN] != -1) {
 						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[DOWN], SYN_TAG,
 								  torus, &syn_request_down);
 						MPI_Irecv(&syn_ack_receive, 1, MPI_INT,
-								  neighbors_rank[DOWN],SYN_ACK_TAG,torus, &syn_ack_down);
+								  neighbors_rank[DOWN], SYN_ACK_TAG,torus, &syn_ack_down);
 					}
 
 					#pragma omp atomic
@@ -238,6 +271,10 @@ int main(int argc, char** argv) {
 				}
 			}
 		}
+	}
+
+	if (best_solution != NULL) {
+		print_solution(best_solution, best_score);
 	}
 
 	MPI_Finalize();
@@ -391,9 +428,9 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 			if (score < best_score) {
 				best_score = score;
 				best_solution = partial_solution;
-				printf("BEST: \n");
-				print_solution(partial_solution, best_score);
-				printf("\n");
+// 				printf("BEST: \n");
+// 				print_solution(partial_solution, best_score);
+// 				printf("\n");
 				best_score_changed++;
 				flag = 1;
 			}
@@ -413,9 +450,13 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 }
 
 void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len) {
-	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
-		   n_rank, my_queue_len, neighbour_queue_len);
+// 	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
+// 		   n_rank, my_queue_len, neighbour_queue_len);
 
+	if (my_queue_len == 0 && neighbour_queue_len==0) {
+		bothzero_loadbal ++;
+		return;
+	}
 }
 
 void send_bound() {
@@ -660,13 +701,13 @@ int initializeLoad(void* domain_data) {
 	}
 }
 
-int calculate_next_rank(){
+int calculate_next_rank() {
 	int next_rank = (my_rank + 1) % world_size;
 
 	return next_rank;
 }
 
-int calculate_prev_rank(){
+int calculate_prev_rank() {
 	int prev_rank;
 
 	if(my_rank == 0)
@@ -678,7 +719,7 @@ int calculate_prev_rank(){
 }
 
 
-void termination_init(){
+void termination_init() {
 	int next_rank = calculate_next_rank();
 	int prev_rank = calculate_prev_rank();
 	int prev_q_len;
@@ -695,7 +736,6 @@ void termination_init(){
 
 	if(prev_num != 0) {
 		//TODO: Restart Load Balncing
-		stop_flag = 0;
 		MPI_Send(&pos_num, 1, MPI_INT, next_rank, TERM_ROUND_2, torus);
 	} else {
 		/* ROUND 2 */
@@ -706,20 +746,21 @@ void termination_init(){
 			//TODO: Restart
 			MPI_Send(&kill_decline, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus);
 			//TODO: Restart
-			MPI_Recv(&dummy, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
+			MPI_Recv(&dummy, 1, MPI_INT, prev_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
 		} else {
 			MPI_Send(&kill_confirmation, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus);
+			MPI_Recv(&dummy, 1, MPI_INT, prev_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
 			//exit_flag = 1;
+			end_program = 1;
 		}
 	}
-
 }
 
-
-void termination_detection(int term_init_msg){
+int termination_detection(int term_init_msg) {
 	i_stopped_chain = 0;
 	int num_zero = 0;
 	int non_zero = -1;
+	int all_done;
 
 	int next_rank = calculate_next_rank();
 	int prev_rank = calculate_prev_rank();
@@ -729,53 +770,88 @@ void termination_detection(int term_init_msg){
 
 	if(term_init_msg != 0) {
 		MPI_Send(&non_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
+		return 0;
 	} else {
-
 		q_len = pq_length(shared_queue);
 
-		if(q_len != 0){
+		if(q_len != 0) {
 			i_stopped_chain = 1;
 			MPI_Send(&non_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
-			//TODO: CHECK
 			MPI_Recv(&dummy, 1, MPI_INT, prev_rank, TERM_ROUND_2, torus, MPI_STATUS_IGNORE);
 			i_stopped_chain = 0;
 
-			//TODO: Restart
+			return 0;
 		} else {
-			//TODO: Lock Turnstiles
-			//TODO: Stop Load balancing
+			omp_set_lock(&work_lock_turnstile);
+			all_done = 0;
+			while (!all_done) {
+				for (int i = 0; i < NUM_THREADS-1; i++) {
+					#pragma omp atomic
+					all_done |= working[i];
+
+					if (all_done)
+						break;
+				}
+
+				if (all_done)
+					all_done = 0;
+				else
+					break;
+			}
 			q_len = pq_length(shared_queue);
-			if( q_len != 0 ){
+			omp_unset_lock(&work_lock_turnstile);
+
+			//NOTREQD-TODO: Stop Load balancing
+
+			if( q_len != 0 ) {
 				i_stopped_chain = 1;
 				MPI_Send(&non_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
-				//CHECK
 				MPI_Recv(&dummy, 1, MPI_INT, prev_rank, TERM_ROUND_2, torus, MPI_STATUS_IGNORE);
 				i_stopped_chain = 0;
+
+				return 0;
 			} else {
 				MPI_Send(&num_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
 
 				/* ROUND 2 */
 				MPI_Recv(&prev_q_len, 1, MPI_INT, prev_rank, TERM_ROUND_2, torus, MPI_STATUS_IGNORE);
 
+				omp_set_lock(&work_lock_turnstile);
+				all_done = 0;
+				while (!all_done) {
+					for (int i = 0; i < NUM_THREADS-1; i++) {
+						#pragma omp atomic
+						all_done |= working[i];
+
+						if (all_done)
+							break;
+					}
+
+					if (all_done)
+						all_done = 0;
+					else
+						break;
+				}
 				add_len = pq_length(shared_queue) + prev_q_len;
+				omp_unset_lock(&work_lock_turnstile);
+
 				MPI_Send(&add_len, 1, MPI_INT, next_rank, TERM_ROUND_2, torus);
 
-				if(add_len != 0){
-					//RESTART:
+				if(add_len != 0) {
+					return 0;
 				} else {
-					MPI_Recv(&kill_msg, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
+					MPI_Recv(&kill_msg, 1, MPI_INT, prev_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
 
 					if(kill_msg != 0) {
-						//RESTART:
-						MPI_Send(&kill_msg, 1, MPI_INT, next_rank, torus, TERM_KILL_TAG);
+						MPI_Send(&kill_msg, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus);
+						return 0;
 					} else {
-						MPI_Send(&kill_msg, 1, MPI_INT, next_rank, torus, TERM_KILL_TAG);
+						MPI_Send(&kill_msg, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus);
 						//TODO: Cleanup and exit
+						return 1;
 					}
 				}
 			}
-
 		}
 	}
-
 }
