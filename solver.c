@@ -17,6 +17,9 @@
 #define DATA_TAG 33
 #define INIT_LOAD_TAG 44
 #define BOUND_TAG 55
+#define TERM_INIT_TAG 66
+#define TERM_ROUND_2 77
+#define TERM_KILL_TAG 88
 
 #define NUM_THREADS 3
 
@@ -35,6 +38,7 @@ int X_LIM;
 int Y_LIM;
 int end_program = 0;
 int in_loadbal = 0;
+int i_stopped_chain;
 
 enum CommNum {
 	CENTRE,
@@ -654,4 +658,124 @@ int initializeLoad(void* domain_data) {
 			return 0;
 		}
 	}
+}
+
+int calculate_next_rank(){
+	int next_rank = (my_rank + 1) % world_size;
+
+	return next_rank;
+}
+
+int calculate_prev_rank(){
+	int prev_rank;
+
+	if(my_rank == 0)
+		prev_rank = world_size - 1;
+	else
+		prev_rank = my_rank - 1;
+
+	return prev_rank;
+}
+
+
+void termination_init(){
+	int next_rank = calculate_next_rank();
+	int prev_rank = calculate_prev_rank();
+	int prev_q_len;
+	int pos_num = 99;
+	int num_zero = 0;
+	int kill_confirmation = 0;
+	int kill_decline = 1;
+	int prev_num;
+	int dummy;
+
+	/* ROUND 1 */
+	MPI_Send(&num_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
+	MPI_Recv(&prev_num, 1, MPI_INT, prev_rank, TERM_INIT_TAG, torus, MPI_STATUS_IGNORE);
+
+	if(prev_num != 0) {
+		//TODO: Restart Load Balncing
+		stop_flag = 0;
+		MPI_Send(&pos_num, 1, MPI_INT, next_rank, TERM_ROUND_2, torus);
+	} else {
+		/* ROUND 2 */
+		MPI_Send(&num_zero, 1, MPI_INT, next_rank, TERM_ROUND_2, torus);
+		MPI_Recv(&prev_q_len, 1, MPI_INT,  prev_rank, TERM_ROUND_2, torus, MPI_STATUS_IGNORE);
+
+		if(prev_q_len != 0){
+			//TODO: Restart
+			MPI_Send(&kill_decline, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus);
+			//TODO: Restart
+			MPI_Recv(&dummy, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
+		} else {
+			MPI_Send(&kill_confirmation, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus);
+			//exit_flag = 1;
+		}
+	}
+
+}
+
+
+void termination_detection(int term_init_msg){
+	i_stopped_chain = 0;
+	int num_zero = 0;
+	int non_zero = -1;
+
+	int next_rank = calculate_next_rank();
+	int prev_rank = calculate_prev_rank();
+	int dummy;
+	int kill_msg;
+	int q_len, add_len, prev_q_len;
+
+	if(term_init_msg != 0) {
+		MPI_Send(&non_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
+	} else {
+
+		q_len = pq_length(shared_queue);
+
+		if(q_len != 0){
+			i_stopped_chain = 1;
+			MPI_Send(&non_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
+			//TODO: CHECK
+			MPI_Recv(&dummy, 1, MPI_INT, prev_rank, TERM_ROUND_2, torus, MPI_STATUS_IGNORE);
+			i_stopped_chain = 0;
+
+			//TODO: Restart
+		} else {
+			//TODO: Lock Turnstiles
+			//TODO: Stop Load balancing
+			q_len = pq_length(shared_queue);
+			if( q_len != 0 ){
+				i_stopped_chain = 1;
+				MPI_Send(&non_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
+				//CHECK
+				MPI_Recv(&dummy, 1, MPI_INT, prev_rank, TERM_ROUND_2, torus, MPI_STATUS_IGNORE);
+				i_stopped_chain = 0;
+			} else {
+				MPI_Send(&num_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
+
+				/* ROUND 2 */
+				MPI_Recv(&prev_q_len, 1, MPI_INT, prev_rank, TERM_ROUND_2, torus, MPI_STATUS_IGNORE);
+
+				add_len = pq_length(shared_queue) + prev_q_len;
+				MPI_Send(&add_len, 1, MPI_INT, next_rank, TERM_ROUND_2, torus);
+
+				if(add_len != 0){
+					//RESTART:
+				} else {
+					MPI_Recv(&kill_msg, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
+
+					if(kill_msg != 0) {
+						//RESTART:
+						MPI_Send(&kill_msg, 1, MPI_INT, next_rank, torus, TERM_KILL_TAG);
+					} else {
+						MPI_Send(&kill_msg, 1, MPI_INT, next_rank, torus, TERM_KILL_TAG);
+						//TODO: Cleanup and exit
+					}
+				}
+			}
+
+		}
+	}
+
 }
