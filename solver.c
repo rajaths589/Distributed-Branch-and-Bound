@@ -113,13 +113,13 @@ int main(int argc, char** argv) {
 				omp_unset_lock(&work_lock_turnstile);
 
 				#pragma omp atomic
-				working[thread_rank] += 1;
+				working[thread_rank] |= 1;
 
 //				printf("RANK:%d THREAD:%d\n", my_rank, thread_rank);
 				expand_partial_solution(private_queue, domain_data);
 
 				#pragma omp atomic
-				working[thread_rank] -= 0;
+				working[thread_rank] &= 0;
 			}
 
 		} else {
@@ -193,15 +193,16 @@ int main(int argc, char** argv) {
 
 				if (!in_loadbal && null_flag >= MIN_NULL_FLAG_LOAD_BAL) {
 					//do load_balancing
-					in_loadbal = 2;
 
 					if (neighbors_rank[RIGHT] != -1) {
+						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[RIGHT], SYN_TAG,
 								  torus, &syn_request_right);
 						MPI_Irecv(&syn_ack_receive, 1, MPI_INT,
 								  neighbors_rank[RIGHT],SYN_ACK_TAG,torus, &syn_ack_right);
 					}
 					if (neighbors_rank[DOWN] != -1) {
+						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[DOWN], SYN_TAG,
 								  torus, &syn_request_down);
 						MPI_Irecv(&syn_ack_receive, 1, MPI_INT,
@@ -212,15 +213,16 @@ int main(int argc, char** argv) {
 					null_flag ^= null_flag;
 				} else if (!in_loadbal && pq_length(shared_queue) > MAX_QLEN_LOAD_BAL) {
 					//do load_balancing
-					in_loadbal = 2;
 
 					if (neighbors_rank[RIGHT] != -1) {
+						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[RIGHT], SYN_TAG,
 								  torus, &syn_request_right);
 						MPI_Irecv(&syn_ack_receive, 1, MPI_INT,
 									neighbors_rank[RIGHT],SYN_ACK_TAG,torus, &syn_ack_right);
 					}
 					if (neighbors_rank[DOWN] != -1) {
+						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[DOWN], SYN_TAG,
 								  torus, &syn_request_down);
 						MPI_Irecv(&syn_ack_receive, 1, MPI_INT,
@@ -269,7 +271,7 @@ void loadbal_recipient(enum CommNum direc) {
 
 	MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc],DATA_TAG,
 			 torus);
-	queue_balancing(neighbors_rank[LEFT], send_queue_len, recv_queue_len);
+	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len);
 }
 
 void loadbal_initiator(enum CommNum direc) {
@@ -294,11 +296,11 @@ void loadbal_initiator(enum CommNum direc) {
 	send_queue_len = pq_length(shared_queue);
 	omp_unset_lock(&work_lock_turnstile);
 
-	MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[RIGHT], DATA_TAG, torus);
-	MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[RIGHT], DATA_TAG, torus,
+	MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG, torus);
+	MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG, torus,
 			MPI_STATUS_IGNORE);
 
-	queue_balancing(neighbors_rank[RIGHT], send_queue_len, recv_queue_len);
+	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len);
 }
 
 void setupCommunicators() {
@@ -534,9 +536,9 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 // }
 //
 //
-void queue_balancing(int neighbor_rank, int my_queue_len, int neighbour_queue_len) {
+void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len) {
 	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
-			neighbor_rank, my_queue_len, neighbour_queue_len);
+		   n_rank, my_queue_len, neighbour_queue_len);
 
 }
 

@@ -1,7 +1,7 @@
 import numpy as np
 import networkx as nx
 
-m = np.random.rand(8, 8)
+m = np.random.rand(12, 12)
 m = (m + m.transpose())/2
 m = m - np.diag(m.diagonal())
 m = np.array(m*10000, dtype=np.int32)
@@ -13,4 +13,4 @@ m = np.array(m/100, dtype=np.int32)
 
 G = nx.from_numpy_matrix(m)
 G = G.to_directed()
-nx.write_edgelist(G, path="tsp_testcase8.txt", delimiter=" ")
+nx.write_edgelist(G, path="tsp_testcase12.txt", delimiter=" ")
