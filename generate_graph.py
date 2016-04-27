@@ -13,4 +13,4 @@ m = np.array(m/100, dtype=np.int32)
 
 G = nx.from_numpy_matrix(m)
 G = G.to_directed()
-nx.write_edgelist(G, path="tsp_testcase.txt", delimiter=" ")
+nx.write_edgelist(G, path="tsp_testcase8.txt", delimiter=" ")
