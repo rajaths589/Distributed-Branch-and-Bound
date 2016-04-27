@@ -64,7 +64,7 @@ void expand_partial_solution(queue* private_queue, void* domain_data);
 MPI_Comm* create_topology();
 void setupCommunicators();
 void load_balancing();
-void loadbal_recipient(enum CommNum direc);
+void loadbal_recipient(enum CommNum direc, int recv_queue_len);
 void loadbal_initiator(enum CommNum direc);
 int initializeLoad(void* domain_data);
 int calculate_next_rank();
@@ -134,21 +134,25 @@ int main(int argc, char** argv) {
 			}
 
 		} else {
-			int bound_send_flag, flag;
+			int bound_send_flag, flag, left_ack_flag, up_ack_flag;
 			int syn_receive, syn_ack_receive, syn_share=1;
-			MPI_Request syn_request_down, syn_request_right;
+			MPI_Request syn_request_down, syn_request_right, syn_ack_up, syn_ack_left;
 			MPI_Request syn_receive_left, syn_receive_up, syn_ack_right, syn_ack_down;
 			MPI_Request termination_request;
+			int recv_queue_len;
 			int termination_token;
+			int syn_ack_send = 1;
 
 			if (neighbors_rank[LEFT] != -1) {
 				MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG, torus,
 							&syn_receive_left);
+				left_ack_flag = 0;
 			}
 
 			if (neighbors_rank[UP] != -1) {
 				MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[UP], SYN_TAG, torus,
 							&syn_receive_up);
+				up_ack_flag = 0;
 			}
 
 			if (my_rank != 0) {
@@ -174,9 +178,18 @@ int main(int argc, char** argv) {
 					MPI_Test(&syn_receive_left, &flag, MPI_STATUS_IGNORE);
 
 					if (flag) {
-						loadbal_recipient(LEFT);
-						MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG,
-								  torus, &syn_receive_left);
+						if (!left_ack_flag) {
+							MPI_Isend(&syn_ack_send, 1, MPI_INT, neighbors_rank[LEFT],
+									  SYN_ACK_TAG, torus, &syn_receive_left);
+							left_ack_flag = 1;
+							MPI_Irecv(&recv_queue_len, 1, MPI_INT, neighbors_rank[LEFT], DATA_TAG,
+									  torus, &syn_ack_left);
+						} else {
+							loadbal_recipient(LEFT, recv_queue_len);
+							MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG,
+										torus, &syn_receive_left);
+							left_ack_flag = 0;
+						}
 					}
 				}
 
@@ -184,9 +197,18 @@ int main(int argc, char** argv) {
 					MPI_Test(&syn_receive_up, &flag, MPI_STATUS_IGNORE);
 
 					if (flag) {
-						loadbal_recipient(UP);
-						MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[UP], SYN_TAG,
-								torus, &syn_receive_up);
+						if (!up_ack_flag) {
+							MPI_Isend(&syn_ack_send, 1, MPI_INT, neighbors_rank[UP],
+									  SYN_ACK_TAG, torus, &syn_receive_up);
+							up_ack_flag = 1;
+							MPI_Irecv(&recv_queue_len, 1, MPI_INT, neighbors_rank[UP], DATA_TAG,
+									  torus, &syn_ack_up);
+						} else {
+							loadbal_recipient(UP, recv_queue_len);
+							MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[UP], SYN_TAG,
+									  torus, &syn_receive_up);
+							up_ack_flag = 0;
+						}
 					}
 				}
 
@@ -282,14 +304,13 @@ int main(int argc, char** argv) {
 	return 0;
 }
 
-void loadbal_recipient(enum CommNum direc) {
-	int syn_ack_send = 1;
-	int send_queue_len, recv_queue_len;
+void loadbal_recipient(enum CommNum direc, int recv_queue_len) {
+	int send_queue_len;
 
-	MPI_Send(&syn_ack_send, 1, MPI_INT, neighbors_rank[direc],
-			 SYN_ACK_TAG, torus);
-	MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG,
-			 torus, MPI_STATUS_IGNORE);
+// 	MPI_Send(&syn_ack_send, 1, MPI_INT, neighbors_rank[direc],
+// 			 SYN_ACK_TAG, torus);
+// 	MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG,
+// 			 torus, MPI_STATUS_IGNORE);
 
 	omp_set_lock(&work_lock_turnstile);
 	int all_done = 0;
