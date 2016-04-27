@@ -142,6 +142,7 @@ int main(int argc, char** argv) {
 			int recv_queue_len;
 			int termination_token;
 			int syn_ack_send = 1;
+			int load_bal_chosen = 1;
 
 			if (neighbors_rank[LEFT] != -1) {
 				MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG, torus,
@@ -180,10 +181,10 @@ int main(int argc, char** argv) {
 					if (flag) {
 						if (!left_ack_flag) {
 							MPI_Isend(&syn_ack_send, 1, MPI_INT, neighbors_rank[LEFT],
-									  SYN_ACK_TAG, torus, &syn_receive_left);
+									  SYN_ACK_TAG, torus, &syn_ack_left);
 							left_ack_flag = 1;
 							MPI_Irecv(&recv_queue_len, 1, MPI_INT, neighbors_rank[LEFT], DATA_TAG,
-									  torus, &syn_ack_left);
+									  torus, &syn_receive_left);
 						} else {
 							loadbal_recipient(LEFT, recv_queue_len);
 							MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG,
@@ -199,10 +200,10 @@ int main(int argc, char** argv) {
 					if (flag) {
 						if (!up_ack_flag) {
 							MPI_Isend(&syn_ack_send, 1, MPI_INT, neighbors_rank[UP],
-									  SYN_ACK_TAG, torus, &syn_receive_up);
+									  SYN_ACK_TAG, torus, &syn_ack_up);
 							up_ack_flag = 1;
 							MPI_Irecv(&recv_queue_len, 1, MPI_INT, neighbors_rank[UP], DATA_TAG,
-									  torus, &syn_ack_up);
+									  torus, &syn_receive_up);
 						} else {
 							loadbal_recipient(UP, recv_queue_len);
 							MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[UP], SYN_TAG,
@@ -213,7 +214,7 @@ int main(int argc, char** argv) {
 				}
 
 				if (in_loadbal) {
-					if (neighbors_rank[RIGHT] != -1) {
+					if (neighbors_rank[RIGHT] != -1 && load_bal_chosen==0) {
 						MPI_Test(&syn_ack_right, &flag, MPI_STATUS_IGNORE);
 
 						if (flag) {
@@ -222,7 +223,7 @@ int main(int argc, char** argv) {
 						}
 					}
 
-					if (neighbors_rank[DOWN] != -1) {
+					if (neighbors_rank[DOWN] != -1 && load_bal_chosen==1) {
 						MPI_Test(&syn_ack_down, &flag, MPI_STATUS_IGNORE);
 
 						if (flag) {
@@ -252,15 +253,17 @@ int main(int argc, char** argv) {
 
 				if (!in_loadbal && null_flag >= MIN_NULL_FLAG_LOAD_BAL) {
 					//do load_balancing
+					load_bal_chosen += 1;
+					load_bal_chosen = load_bal_chosen%2;
 
-					if (neighbors_rank[RIGHT] != -1) {
+					if (neighbors_rank[RIGHT] != -1 && load_bal_chosen==0) {
 						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[RIGHT], SYN_TAG,
 								  torus, &syn_request_right);
 						MPI_Irecv(&syn_ack_receive, 1, MPI_INT,
 								  neighbors_rank[RIGHT],SYN_ACK_TAG,torus, &syn_ack_right);
 					}
-					if (neighbors_rank[DOWN] != -1) {
+					if (neighbors_rank[DOWN] != -1 && load_bal_chosen==1) {
 						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[DOWN], SYN_TAG,
 								  torus, &syn_request_down);
@@ -272,15 +275,17 @@ int main(int argc, char** argv) {
 					null_flag ^= null_flag;
 				} else if (!in_loadbal && pq_length(shared_queue) > MAX_QLEN_LOAD_BAL) {
 					//do load_balancing
+					load_bal_chosen += 1;
+					load_bal_chosen = load_bal_chosen%2;
 
-					if (neighbors_rank[RIGHT] != -1) {
+					if (neighbors_rank[RIGHT] != -1 && load_bal_chosen==0) {
 						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[RIGHT], SYN_TAG,
 								  torus, &syn_request_right);
 						MPI_Irecv(&syn_ack_receive, 1, MPI_INT,
 									neighbors_rank[RIGHT], SYN_ACK_TAG,torus, &syn_ack_right);
 					}
-					if (neighbors_rank[DOWN] != -1) {
+					if (neighbors_rank[DOWN] != -1 && load_bal_chosen==1) {
 						in_loadbal++;
 						MPI_Isend(&syn_share, 1, MPI_INT, neighbors_rank[DOWN], SYN_TAG,
 								  torus, &syn_request_down);
@@ -306,11 +311,6 @@ int main(int argc, char** argv) {
 
 void loadbal_recipient(enum CommNum direc, int recv_queue_len) {
 	int send_queue_len;
-
-// 	MPI_Send(&syn_ack_send, 1, MPI_INT, neighbors_rank[direc],
-// 			 SYN_ACK_TAG, torus);
-// 	MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG,
-// 			 torus, MPI_STATUS_IGNORE);
 
 	omp_set_lock(&work_lock_turnstile);
 	int all_done = 0;
@@ -471,7 +471,7 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 }
 
 void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len) {
-// 	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
+//  	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
 // 		   n_rank, my_queue_len, neighbour_queue_len);
 
 	if (my_queue_len == 0 && neighbour_queue_len==0) {
@@ -741,6 +741,7 @@ int calculate_prev_rank() {
 
 
 void termination_init() {
+// 	printf("INIT\n");
 	int next_rank = calculate_next_rank();
 	int prev_rank = calculate_prev_rank();
 	int prev_q_len;
