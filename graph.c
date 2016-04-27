@@ -47,6 +47,7 @@ void add_edge(graph* g, int from, int to, float weight) {
 	new_edge->from = from;
 	new_edge->to = to;
 	new_edge->weight = weight;
+	new_edge->next = NULL;
 
 	list_node* l;
 	l = g->adjacency_list[from];

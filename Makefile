@@ -15,4 +15,4 @@ leftist_heap.o : leftist_heap.c
 	gcc -g -c -fopenmp leftist_heap.c
 
 solver.o : solver.c
-	mpicc -g -fopenmp -lm solver.c leftist_heap.c tsp.c graph.c bitvector.c
+	mpicc -g -Wall -fopenmp -lm solver.c leftist_heap.c tsp.c graph.c bitvector.c

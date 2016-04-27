@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdio.h>
 #include <omp.h>
 #include <assert.h>
 
@@ -95,7 +96,6 @@ void pq_insert_nc(queue* q, float priority, solution_vector partial_solution) {
 	q->length ++;
 }
 
-
 void pq_merge(queue* q1, queue* q2) {
 	LOCK(q1);
 
@@ -138,11 +138,8 @@ queue_head* merge_helper(queue_head* q1, queue_head* q2) {
 		SWAP(q1->left_subtree, q1->right_subtree);
 	}
 
-	if (q1->right_subtree == NULL)
-		q1->distance = 0;
-	else
-		q1->distance = 1 + node_distance(q1->right_subtree);
-
+	q1->distance = MIN(node_distance(q1->right_subtree), node_distance(q1->left_subtree)) + 1;
+	q1->length = node_length(q1->left_subtree) + node_length(q1->right_subtree) + 1;
 	return q1;
 }
 
@@ -162,17 +159,8 @@ queue_head* prune_helper(queue_head* q, float min_bound) {
 		SWAP(q->left_subtree, q->right_subtree);
 	}
 
-	if (q->right_subtree == NULL) {
-		q->distance = 0;
-		if (q->left_subtree != NULL)
-			q->length = 1 + q->left_subtree->length;
-		else
-			q->length = 1;
-	}
-	else {
-		q->distance = 1 + node_distance(q->right_subtree);
-		q->length = 1 + q->left_subtree->length + q->right_subtree->length;
-	}
+	q->distance = MIN(node_distance(q->right_subtree), node_distance(q->left_subtree)) + 1;
+	q->length = node_length(q->left_subtree) + node_length(q->right_subtree) + 1;
 
 	return q;
 }
@@ -182,12 +170,12 @@ queue_head* extract_helper(queue_head* qh, int num) {
 
 	if (MAX(node_length(qh->left_subtree), node_length(qh->right_subtree)) ==
 		node_length(qh->left_subtree)) {
-		if (node_length(qh->left_subtree) == num) {
-			temp_r = qh->left_subtree;
-			qh->left_subtree = NULL;
-		} else {
-			temp_r = extract_helper(qh->left_subtree, num);
-		}
+			if (node_length(qh->left_subtree) == num) {
+				temp_r = qh->left_subtree;
+				qh->left_subtree = NULL;
+			} else {
+				temp_r = extract_helper(qh->left_subtree, num);
+			}
 		} else {
 			if (node_length(qh->right_subtree) == num) {
 				temp_r = qh->right_subtree;
@@ -200,9 +188,9 @@ queue_head* extract_helper(queue_head* qh, int num) {
 		if (node_distance(qh->right_subtree) > node_distance(qh->left_subtree)) {
 			SWAP(qh->left_subtree, qh->right_subtree);
 		}
-		qh->distance = MIN(node_distance(qh->left_subtree), node_distance(qh->right_subtree)) +
-		1;
-		qh->length = node_length(qh->left_subtree) + node_distance(qh->right_subtree);
+		qh->distance = MIN(node_distance(qh->left_subtree), node_distance(qh->right_subtree))
+						+1;
+		qh->length = node_length(qh->left_subtree) + node_length(qh->right_subtree) + 1;
 
 	return temp_r;
 }
@@ -213,7 +201,6 @@ queue_head* pq_extract(struct queue* q, int num) {
 	LOCK(q);
 
 	assert(num < q->length);
-
 	queue_head* qh = extract_helper(q->root_node, num);
 	q->length = q->root_node->length;
 
