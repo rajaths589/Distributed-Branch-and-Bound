@@ -4,13 +4,21 @@
 #include <time.h>
 #include <stdio.h>
 
+int MIN(int a, int b) {
+	return (a<b)?a:b;
+}
+
+int MAX(int a, int b) {
+	return (a>b)?a:b;
+}
+
 int main(int argc, char* argv[]) {
 	int nthreads = 4;
 	queue* q = create_queue();
 
 	srand(time(NULL));
 	int max_numbers = 1000;
-	int num_inserts = 100;
+	int num_inserts = 50000;
 
 //	unsigned char* is_used = (unsigned char*) calloc(max_numbers, sizeof(unsigned char));
 	int* numbers = (int*) malloc(num_inserts*sizeof(int));
@@ -41,14 +49,16 @@ int main(int argc, char* argv[]) {
 		pq_merge(q, private_q);
 	}
 
-	pq_prune(q, 200);
+//	pq_prune(q, 200);
 
 	float f;
-	while (pq_length(q)) {
-		pq_min_extract(q, &f);
-
-		printf("%f\n", f);
-	}
+// 	while (pq_length(q)) {
+// 		pq_min_extract(q, &f);
+//
+// 		printf("%f\n", f);
+// 	}
+	queue_head* qh = pq_extract(q, 20);
+	printf("%d\n", qh->length);
 
 	return 0;
 }

@@ -148,6 +148,7 @@ void pack_solution(void* buff, int buff_size, int* pos, solution_vector vec, flo
 				   MPI_Comm comm, void* problem_data) {
 
 	tsp_path* path = (tsp_path*) vec;
+//	print_solution(path, score);
 	MPI_Pack(&score, 1, MPI_FLOAT, buff, buff_size, pos, comm);
 	MPI_Pack(&path->curr_length, 1, MPI_INT, buff, buff_size, pos, comm);
 	MPI_Pack(path->path, path->max_length, MPI_INT, buff, buff_size, pos, comm);
@@ -161,8 +162,11 @@ score,
 	MPI_Unpack(buff, buff_size, pos, score, 1, MPI_FLOAT, comm);
 	MPI_Unpack(buff, buff_size, pos, &p->curr_length, 1, MPI_INT, comm);
 	MPI_Unpack(buff, buff_size, pos, p->path, p->max_length, MPI_INT, comm);
+//	print_solution(p, *score);
 
 	//populate bitvector
+//	printf("%d %d\n", p->curr_length, p->max_length);
+//	assert(p->curr_length < p->max_length);
 	for (int i = 0; i < p->curr_length; i++)
 		setIndex(p->used_vertices, p->path[i]);
 

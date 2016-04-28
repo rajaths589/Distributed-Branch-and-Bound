@@ -20,13 +20,16 @@
 #define TERM_INIT_TAG 66
 #define TERM_ROUND_2 77
 #define TERM_KILL_TAG 88
+#define QUEUE_DATA_TAG 99
 
 #define TERMINATION_CONDITION 4
 
 #define NUM_THREADS 3
 
 #define MIN_NULL_FLAG_LOAD_BAL 5
-#define MAX_QLEN_LOAD_BAL 80
+#define MAX_QLEN_LOAD_BAL 300
+
+#define LOAD_BAL_THRESH 1000
 
 int working[NUM_THREADS];
 int null_flag;
@@ -42,6 +45,7 @@ int end_program = 0;
 int in_loadbal = 0;
 int i_stopped_chain;
 int bothzero_loadbal = 0;
+void* problem_data;
 
 enum CommNum {
 	CENTRE,
@@ -57,9 +61,16 @@ typedef struct bound_comm {
 	int start_rank;
 } bound_comm;
 
+int ABSVAL(int a, int b) {
+	if(a > b)
+		return (a - b);
+	else
+		return (b - a);
+}
+
 void send_bound();
 void receive_and_forward_bound();
-void queue_balancing(int neighbor_rank, int my_queue_len, int neighbour_queue_len);
+void queue_balancing(int neighbor_rank, int my_queue_len, int neighbour_queue_len, int recp);
 void expand_partial_solution(queue* private_queue, void* domain_data);
 MPI_Comm* create_topology();
 void setupCommunicators();
@@ -71,6 +82,8 @@ int calculate_next_rank();
 int calculate_prev_rank();
 void termination_init();
 int termination_detection(int);
+void pack_array(queue_head* qh, void* outbuff, int buff_size, int* pos, void* problem_data);
+void unpack_array(queue* q, void* outbuff, int buff_size, int len, int* pos, void* problem_data);
 
 MPI_Datatype bound_comm_t;
 
@@ -104,11 +117,11 @@ int main(int argc, char** argv) {
 	omp_init_lock(&best_solution_lock);
 	omp_init_lock(&work_lock_turnstile);
 
-	void* domain_data = populate_domain_data(argc, argv);
+	problem_data = populate_domain_data(argc, argv);
 
 	shared_queue = create_queue();
 
-	initializeLoad(domain_data);
+	initializeLoad(problem_data);
 	null_flag = 0;
 
 	#pragma omp parallel num_threads(NUM_THREADS)
@@ -127,7 +140,7 @@ int main(int argc, char** argv) {
 				working[thread_rank] |= 1;
 
 //				printf("RANK:%d THREAD:%d\n", my_rank, thread_rank);
-				expand_partial_solution(private_queue, domain_data);
+				expand_partial_solution(private_queue, problem_data);
 
 				#pragma omp atomic
 				working[thread_rank] &= 0;
@@ -329,11 +342,11 @@ void loadbal_recipient(enum CommNum direc, int recv_queue_len) {
 			break;
 	}
 	send_queue_len = pq_length(shared_queue);
-	omp_unset_lock(&work_lock_turnstile);
 
 	MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc],DATA_TAG,
 			 torus);
-	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len);
+	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len, 1);
+	omp_unset_lock(&work_lock_turnstile);
 }
 
 void loadbal_initiator(enum CommNum direc) {
@@ -356,13 +369,14 @@ void loadbal_initiator(enum CommNum direc) {
 			break;
 	}
 	send_queue_len = pq_length(shared_queue);
-	omp_unset_lock(&work_lock_turnstile);
+// 	omp_unset_lock(&work_lock_turnstile);
 
 	MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG, torus);
 	MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG, torus,
 			MPI_STATUS_IGNORE);
 
-	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len);
+	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len, 0);
+	omp_unset_lock(&work_lock_turnstile);
 }
 
 void setupCommunicators() {
@@ -438,9 +452,6 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 	solution_vector partial_solution = pq_min_extract(shared_queue, &score);
 
 	if (partial_solution != NULL) {
-// 		printf("RANK: %d\n", my_rank);
-// 		print_solution(partial_solution, score);
-// 		printf("\n");
 
 		if (construct_candidates(partial_solution, score, private_queue, domain_data)) {
 			int flag = 0;
@@ -449,9 +460,6 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 			if (score < best_score) {
 				best_score = score;
 				best_solution = partial_solution;
-// 				printf("BEST: \n");
-// 				print_solution(partial_solution, best_score);
-// 				printf("\n");
 				best_score_changed++;
 				flag = 1;
 			}
@@ -470,14 +478,47 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 	}
 }
 
-void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len) {
-//  	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
-// 		   n_rank, my_queue_len, neighbour_queue_len);
-
+void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len, int recp) {
+	printf("ENTER %d as %d for %d\n", my_rank, recp, n_rank);
+	int pos = 0;
 	if (my_queue_len == 0 && neighbour_queue_len==0) {
 		bothzero_loadbal ++;
+//		omp_unset_lock(&work_lock_turnstile);
 		return;
 	}
+
+	if ( ABSVAL(my_queue_len, neighbour_queue_len) > LOAD_BAL_THRESH ) {
+ 		printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
+			   n_rank, my_queue_len, neighbour_queue_len);
+		void* buff = malloc((LOAD_BAL_THRESH/2)*solution_vector_size);
+		if (my_queue_len > neighbour_queue_len) {
+			printf("ENTER %d as S %d\n", my_rank, n_rank);
+			pos = 0;
+			queue_head* send_data = pq_extract(shared_queue, (LOAD_BAL_THRESH/2));
+//			omp_unset_lock(&work_lock_turnstile);
+// 			printf("QUEUE_LEN: %d\n", send_data->length);
+			pack_array(send_data, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, &pos, problem_data);
+			MPI_Send(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus);
+// 			printf("SENT DATA\n");
+			printf("EXIT %d as S %d\n", my_rank, n_rank);
+		} else {
+			printf("ENTER %d as Ra %d\n", my_rank, n_rank);
+			pos = 0;
+//			omp_unset_lock(&work_lock_turnstile);
+			MPI_Recv(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus, MPI_STATUS_IGNORE);
+			printf("EXIT %d as Ra %d\n", my_rank, n_rank);
+			queue* new_queue = create_queue();
+			unpack_array(new_queue, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, (LOAD_BAL_THRESH/2), &pos, problem_data);
+			pq_merge(shared_queue, new_queue);
+			destroy_queue(new_queue);
+// 			printf("RECD DATA\n");
+
+		}
+		free(buff);
+	} else {
+//		omp_unset_lock(&work_lock_turnstile);
+	}
+// 	omp_unset_lock(&work_lock_turnstile);
 }
 
 void send_bound() {
@@ -741,11 +782,11 @@ int calculate_prev_rank() {
 
 
 void termination_init() {
-// 	printf("INIT\n");
+//	printf("INIT\n");
 	int next_rank = calculate_next_rank();
 	int prev_rank = calculate_prev_rank();
 	int prev_q_len;
-	int pos_num = 99;
+	int pos_num = 93;
 	int num_zero = 0;
 	int kill_confirmation = 0;
 	int kill_decline = 1;

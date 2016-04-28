@@ -4,9 +4,11 @@
 #include <mpi.h>
 
 #define NEW(TYPE, X) TYPE* X = (TYPE*) malloc(sizeof(TYPE))
-#define MIN(X, Y) X<Y ? X:Y
-#define MAX(X, Y) X>Y ? X:Y
+//#define ABSVAL(X, Y) (X>Y)?(X-Y):(Y-X)
 
+int MIN(int a, int b);
+int MAX(int a, int b);
+int ABSVAL(int a, int b);
 // assumes that temp is declared
 #define SWAP(X, Y) temp = X; X = Y; Y = temp
 
