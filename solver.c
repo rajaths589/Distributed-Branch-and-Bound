@@ -29,11 +29,12 @@
 #define MIN_NULL_FLAG_LOAD_BAL 5
 #define MAX_QLEN_LOAD_BAL 300
 
-#define LOAD_BAL_THRESH 1000
+#define LOAD_BAL_THRESH 10000
 
 int working[NUM_THREADS];
 int null_flag;
 omp_lock_t work_lock_turnstile;
+omp_lock_t working_lock;
 queue* shared_queue;
 
 int err = 0;
@@ -116,6 +117,7 @@ int main(int argc, char** argv) {
 
 	omp_init_lock(&best_solution_lock);
 	omp_init_lock(&work_lock_turnstile);
+	omp_init_lock(&working_lock);
 
 	problem_data = populate_domain_data(argc, argv);
 
@@ -136,21 +138,23 @@ int main(int argc, char** argv) {
 				omp_set_lock(&work_lock_turnstile);
 				omp_unset_lock(&work_lock_turnstile);
 
-				#pragma omp atomic
+				omp_set_lock(&working_lock);
 				working[thread_rank] |= 1;
+				omp_unset_lock(&working_lock);
 
 //				printf("RANK:%d THREAD:%d\n", my_rank, thread_rank);
 				expand_partial_solution(private_queue, problem_data);
 
-				#pragma omp atomic
+				omp_set_lock(&working_lock);
 				working[thread_rank] &= 0;
+				omp_unset_lock(&working_lock);
 			}
 
 		} else {
-			int bound_send_flag, flag, left_ack_flag, up_ack_flag;
+			int bound_send_flag, flag, left_ack_flag, up_ack_flag ;
 			int syn_receive, syn_ack_receive, syn_share=1;
 			MPI_Request syn_request_down, syn_request_right, syn_ack_up, syn_ack_left;
-			MPI_Request syn_receive_left, syn_receive_up, syn_ack_right, syn_ack_down;
+			MPI_Request syn_receive_left, syn_receive_up, syn_ack_right, syn_ack_down, syn_qrecv_left, syn_qrecv_up;
 			MPI_Request termination_request;
 			int recv_queue_len;
 			int termination_token;
@@ -189,42 +193,59 @@ int main(int argc, char** argv) {
 				receive_and_forward_bound();
 
 				if (neighbors_rank[LEFT] != -1) {
-					MPI_Test(&syn_receive_left, &flag, MPI_STATUS_IGNORE);
 
-					if (flag) {
-						if (!left_ack_flag) {
-							MPI_Isend(&syn_ack_send, 1, MPI_INT, neighbors_rank[LEFT],
-									  SYN_ACK_TAG, torus, &syn_ack_left);
-							left_ack_flag = 1;
-							MPI_Irecv(&recv_queue_len, 1, MPI_INT, neighbors_rank[LEFT], DATA_TAG,
-									  torus, &syn_receive_left);
-						} else {
+					if(left_ack_flag){
+
+						MPI_Test(&syn_qrecv_left, &flag, MPI_STATUS_IGNORE);
+
+						if (flag) {
 							loadbal_recipient(LEFT, recv_queue_len);
 							MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[LEFT], SYN_TAG,
 										torus, &syn_receive_left);
 							left_ack_flag = 0;
 						}
+
+					} else {
+
+						MPI_Test(&syn_receive_left, &flag, MPI_STATUS_IGNORE);
+
+						if (flag) {
+							MPI_Isend(&syn_ack_send, 1, MPI_INT, neighbors_rank[LEFT],
+										  SYN_ACK_TAG, torus, &syn_ack_left);
+							MPI_Irecv(&recv_queue_len, 1, MPI_INT, neighbors_rank[LEFT], DATA_TAG,
+										  torus, &syn_qrecv_left);
+							left_ack_flag = 1;
+						}
 					}
+					
 				}
 
 				if (neighbors_rank[UP] != -1) {
-					MPI_Test(&syn_receive_up, &flag, MPI_STATUS_IGNORE);
+					if(up_ack_flag) {
+						MPI_Test(&syn_qrecv_up, &flag, MPI_STATUS_IGNORE);
 
-					if (flag) {
-						if (!up_ack_flag) {
-							MPI_Isend(&syn_ack_send, 1, MPI_INT, neighbors_rank[UP],
-									  SYN_ACK_TAG, torus, &syn_ack_up);
-							up_ack_flag = 1;
-							MPI_Irecv(&recv_queue_len, 1, MPI_INT, neighbors_rank[UP], DATA_TAG,
-									  torus, &syn_receive_up);
-						} else {
+						if (flag) {
 							loadbal_recipient(UP, recv_queue_len);
 							MPI_Irecv(&syn_receive, 1, MPI_INT, neighbors_rank[UP], SYN_TAG,
-									  torus, &syn_receive_up);
+										torus, &syn_receive_up);
 							up_ack_flag = 0;
 						}
+					} else {
+
+
+						MPI_Test(&syn_receive_up, &flag, MPI_STATUS_IGNORE);
+
+						if (flag) {
+							MPI_Isend(&syn_ack_send, 1, MPI_INT, neighbors_rank[UP],
+										  SYN_ACK_TAG, torus, &syn_ack_up);
+							MPI_Irecv(&recv_queue_len, 1, MPI_INT, neighbors_rank[UP], DATA_TAG,
+										  torus, &syn_qrecv_up);
+							up_ack_flag = 1;
+						}
 					}
+					
 				}
+
 
 				if (in_loadbal) {
 					if (neighbors_rank[RIGHT] != -1 && load_bal_chosen==0) {
@@ -329,9 +350,9 @@ void loadbal_recipient(enum CommNum direc, int recv_queue_len) {
 	int all_done = 0;
 	while (!all_done) {
 		for (int i = 0; i < NUM_THREADS-1; i++) {
-			#pragma omp atomic
+			omp_set_lock(&working_lock);
 			all_done |= working[i];
-
+			omp_unset_lock(&working_lock);
 			if (all_done)
 				break;
 		}
@@ -343,8 +364,8 @@ void loadbal_recipient(enum CommNum direc, int recv_queue_len) {
 	}
 	send_queue_len = pq_length(shared_queue);
 
-	MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc],DATA_TAG,
-			 torus);
+	// MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc],DATA_TAG,
+	// 		 torus);
 	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len, 1);
 	omp_unset_lock(&work_lock_turnstile);
 }
@@ -356,9 +377,9 @@ void loadbal_initiator(enum CommNum direc) {
 	int all_done = 0;
 	while (!all_done) {
 		for (int i = 0; i < NUM_THREADS-1; i++) {
-			#pragma omp atomic
+			omp_set_lock(&working_lock);
 			all_done |= working[i];
-
+			omp_unset_lock(&working_lock);
 			if (all_done)
 				break;
 		}
@@ -372,10 +393,8 @@ void loadbal_initiator(enum CommNum direc) {
 // 	omp_unset_lock(&work_lock_turnstile);
 
 	MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG, torus);
-	MPI_Recv(&recv_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG, torus,
-			MPI_STATUS_IGNORE);
-
-	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len, 0);
+	
+	queue_balancing(neighbors_rank[direc], send_queue_len, 0, 0);
 	omp_unset_lock(&work_lock_turnstile);
 }
 
@@ -479,45 +498,80 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 }
 
 void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len, int recp) {
-	printf("ENTER %d as %d for %d\n", my_rank, recp, n_rank);
+	//printf("ENTER %d as %d for %d\n", my_rank, recp, n_rank);
 	int pos = 0;
-	if (my_queue_len == 0 && neighbour_queue_len==0) {
-		bothzero_loadbal ++;
-//		omp_unset_lock(&work_lock_turnstile);
+// 	if (my_queue_len == 0 && neighbour_queue_len==0) {
+// 		bothzero_loadbal ++;
+// 		//printf("BOTH ZERO\n");
+// //		omp_unset_lock(&work_lock_turnstile);
+// 		return;
+// 	}
+	int ros_flag;
+
+	if(recp){
+		int flag_for_comm;
+		if ( ABSVAL(my_queue_len, neighbour_queue_len) > LOAD_BAL_THRESH ) {
+			printf("QB\n");	
+			if (my_queue_len > neighbour_queue_len) {
+				flag_for_comm = 1;
+				ros_flag = 0;
+			} else {
+				flag_for_comm = 0;
+				ros_flag = 1;
+			}
+
+			
+		} else {
+			flag_for_comm = -1;
+			ros_flag = -1;
+		}
+
+		MPI_Send(&flag_for_comm, 1, MPI_INT, n_rank, DATA_TAG, torus);
+
+	} else {
+		
+		MPI_Recv(&ros_flag, 1, MPI_INT, n_rank, DATA_TAG, torus,
+			MPI_STATUS_IGNORE);
+
+	}
+
+	if (ros_flag == -1) {
+		if (my_rank == 0)
+			bothzero_loadbal++;
 		return;
 	}
 
-	if ( ABSVAL(my_queue_len, neighbour_queue_len) > LOAD_BAL_THRESH ) {
- 		printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
-			   n_rank, my_queue_len, neighbour_queue_len);
-		void* buff = malloc((LOAD_BAL_THRESH/2)*solution_vector_size);
-		if (my_queue_len > neighbour_queue_len) {
-			printf("ENTER %d as S %d\n", my_rank, n_rank);
-			pos = 0;
-			queue_head* send_data = pq_extract(shared_queue, (LOAD_BAL_THRESH/2));
+	printf("%d RF: %d\n", recp, ros_flag);
+	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
+					n_rank, my_queue_len, neighbour_queue_len);
+	void* buff = malloc((LOAD_BAL_THRESH/2)*solution_vector_size);
+	if (!ros_flag) {
+		printf("ENTER %d as S %d\n", my_rank, n_rank);
+		pos = 0;
+		queue_head* send_data = pq_extract(shared_queue, (LOAD_BAL_THRESH/2));
 //			omp_unset_lock(&work_lock_turnstile);
 // 			printf("QUEUE_LEN: %d\n", send_data->length);
-			pack_array(send_data, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, &pos, problem_data);
-			MPI_Send(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus);
+		pack_array(send_data, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, &pos, problem_data);
+		MPI_Send(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus);
 // 			printf("SENT DATA\n");
-			printf("EXIT %d as S %d\n", my_rank, n_rank);
-		} else {
-			printf("ENTER %d as Ra %d\n", my_rank, n_rank);
-			pos = 0;
+		printf("EXIT %d as S %d\n", my_rank, n_rank);
+	} else {
+		printf("ENTER %d as Ra %d\n", my_rank, n_rank);
+		pos = 0;
 //			omp_unset_lock(&work_lock_turnstile);
-			MPI_Recv(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus, MPI_STATUS_IGNORE);
-			printf("EXIT %d as Ra %d\n", my_rank, n_rank);
-			queue* new_queue = create_queue();
-			unpack_array(new_queue, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, (LOAD_BAL_THRESH/2), &pos, problem_data);
-			pq_merge(shared_queue, new_queue);
-			destroy_queue(new_queue);
+		MPI_Recv(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus, MPI_STATUS_IGNORE);
+		printf("EXIT %d as Ra %d\n", my_rank, n_rank);
+		queue* new_queue = create_queue();
+		unpack_array(new_queue, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, (LOAD_BAL_THRESH/2), &pos, problem_data);
+
+		printf("nqlength %d\n",pq_length(new_queue));
+		pq_merge(shared_queue, new_queue);
+		destroy_queue(new_queue);
 // 			printf("RECD DATA\n");
 
-		}
-		free(buff);
-	} else {
-//		omp_unset_lock(&work_lock_turnstile);
 	}
+	free(buff);
+
 // 	omp_unset_lock(&work_lock_turnstile);
 }
 
@@ -849,9 +903,9 @@ int termination_detection(int term_init_msg) {
 			all_done = 0;
 			while (!all_done) {
 				for (int i = 0; i < NUM_THREADS-1; i++) {
-					#pragma omp atomic
+					omp_set_lock(&working_lock);
 					all_done |= working[i];
-
+					omp_unset_lock(&working_lock);
 					if (all_done)
 						break;
 				}
@@ -883,9 +937,9 @@ int termination_detection(int term_init_msg) {
 				all_done = 0;
 				while (!all_done) {
 					for (int i = 0; i < NUM_THREADS-1; i++) {
-						#pragma omp atomic
+						omp_set_lock(&working_lock);
 						all_done |= working[i];
-
+						omp_unset_lock(&working_lock);
 						if (all_done)
 							break;
 					}
