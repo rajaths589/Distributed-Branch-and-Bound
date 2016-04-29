@@ -8,5 +8,5 @@ clean :
 tsp : tsp.c solver.c leftist_heap.c graph.c bitvector.c list.c
 	mpicc -g -Wall -fopenmp -o tsp tsp.c solver.c leftist_heap.c graph.c bitvector.c list.c -lm
 
-vertex_color: graph_color.c solver.c leftist_heap.c graph.c bitvector.c
+vertex_color: graph_color.c solver.c leftist_heap.c graph.c bitvector.c list.c
 	mpicc -g -Wall -fopenmp -o vertex_color graph_color.c solver.c leftist_heap.c graph.c bitvector.c list.c -lm
