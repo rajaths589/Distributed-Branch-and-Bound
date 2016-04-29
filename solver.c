@@ -11,6 +11,7 @@
 #include "priority_queue.h"
 #include "generics.h"
 #include "comforts.h"
+#include "list.h"
 
 #define SYN_TAG 11
 #define SYN_ACK_TAG 22
@@ -91,7 +92,7 @@ MPI_Datatype bound_comm_t;
 omp_lock_t best_solution_lock;
 int best_score_changed = 0;
 float best_score = FLT_MAX;
-solution_vector best_solution;
+list* best_solution;
 MPI_Comm torus;
 int neighbors_rank[5];
 int torus_neighbors_rank[5];
@@ -118,6 +119,8 @@ int main(int argc, char** argv) {
 	omp_init_lock(&best_solution_lock);
 	omp_init_lock(&work_lock_turnstile);
 	omp_init_lock(&working_lock);
+
+	best_solution = create_list();
 
 	problem_data = populate_domain_data(argc, argv);
 
@@ -334,9 +337,8 @@ int main(int argc, char** argv) {
 
 	for (int i = 0; i < world_size; i++) {
 		MPI_Barrier(torus);
-		if (my_rank == i && best_solution != NULL) {
-			print_solution(best_solution, best_score);
-			printf("\n");
+		if (my_rank == i) {
+			list_print(best_solution, best_score);
 		}
 	}
 
@@ -479,9 +481,12 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 			omp_set_lock(&best_solution_lock);
 			if (score < best_score) {
 				best_score = score;
-				best_solution = partial_solution;
+				list_clear(best_solution);
+				list_insert(best_solution, partial_solution);
 				best_score_changed++;
 				flag = 1;
+			} else if (score == best_score) {
+				list_insert(best_solution, partial_solution);
 			}
 			omp_unset_lock(&best_solution_lock);
 
@@ -597,7 +602,7 @@ void receive_and_forward_bound() {
 		omp_set_lock(&best_solution_lock);
 		if (recv_bound.new_bound < best_score) {
 			best_score = recv_bound.new_bound;
-			best_solution = NULL;
+			list_clear(best_solution);
 			flag = 1;
 		}
 		omp_unset_lock(&best_solution_lock);
@@ -622,7 +627,7 @@ void receive_and_forward_bound() {
 		omp_set_lock(&best_solution_lock);
 		if (recv_bound.new_bound < best_score) {
 			best_score = recv_bound.new_bound;
-			best_solution = NULL;
+			list_clear(best_solution);
 			flag = 1;
 		}
 		omp_unset_lock(&best_solution_lock);
@@ -647,7 +652,7 @@ void receive_and_forward_bound() {
 		omp_set_lock(&best_solution_lock);
 		if (recv_bound.new_bound < best_score) {
 			best_score = recv_bound.new_bound;
-			best_solution = NULL;
+			list_clear(best_solution);
 			flag = 1;
 		}
 		omp_unset_lock(&best_solution_lock);
@@ -678,7 +683,7 @@ void receive_and_forward_bound() {
 		omp_set_lock(&best_solution_lock);
 		if (recv_bound.new_bound < best_score) {
 			best_score = recv_bound.new_bound;
-			best_solution = NULL;
+			list_clear(best_solution);
 			flag = 1;
 		}
 		omp_unset_lock(&best_solution_lock);
