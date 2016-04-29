@@ -5,14 +5,8 @@ clean :
 	rm -rf tsp
 	rm -rf vertex_color
 
-tsp : tsp.c
-	gcc -g -c tsp.c
+tsp : tsp.c solver.c leftist_heap.c graph.c bitvector.c
+	mpicc -g -Wall -fopenmp -o tsp tsp.c solver.c leftist_heap.c graph.c bitvector.c -lm
 
-vertex_color: vertex_color.c
-	gcc -g -c vertex_color.c
-
-leftist_heap.o : leftist_heap.c
-	gcc -g -c -fopenmp leftist_heap.c
-
-solver.o : solver.c
-	mpicc -g -Wall -fopenmp -lm solver.c leftist_heap.c tsp.c graph.c bitvector.c
+vertex_color: graph_color.c solver.c leftist_heap.c graph.c bitvector.c
+	mpicc -g -Wall -fopenmp -o vertex_color graph_color.c solver.c leftist_heap.c graph.c bitvector.c -lm

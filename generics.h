@@ -9,6 +9,7 @@ extern int solution_vector_size;
 
 void* populate_domain_data(int argc, char** argv);
 
+float get_root_partial_soln_score(void* domain_specific_data);
 solution_vector get_root_partial_solution(void* domain_specific_data);
 
 // returns if the partial_solution was a full solution

@@ -142,7 +142,6 @@ int main(int argc, char** argv) {
 				working[thread_rank] |= 1;
 				omp_unset_lock(&working_lock);
 
-//				printf("RANK:%d THREAD:%d\n", my_rank, thread_rank);
 				expand_partial_solution(private_queue, problem_data);
 
 				omp_set_lock(&working_lock);
@@ -179,7 +178,6 @@ int main(int argc, char** argv) {
 			}
 
 			while (!end_program) {
-// 				printf("RANK:%d QUEUE_LEN:%d\n", my_rank, pq_length(shared_queue));
 				bound_send_flag = 0;
 				omp_set_lock(&best_solution_lock);
 				if (best_score_changed > 0) {
@@ -217,7 +215,7 @@ int main(int argc, char** argv) {
 							left_ack_flag = 1;
 						}
 					}
-					
+
 				}
 
 				if (neighbors_rank[UP] != -1) {
@@ -243,7 +241,7 @@ int main(int argc, char** argv) {
 							up_ack_flag = 1;
 						}
 					}
-					
+
 				}
 
 
@@ -349,51 +347,50 @@ void loadbal_recipient(enum CommNum direc, int recv_queue_len) {
 	omp_set_lock(&work_lock_turnstile);
 	int all_done = 0;
 	while (!all_done) {
+		omp_set_lock(&working_lock);
 		for (int i = 0; i < NUM_THREADS-1; i++) {
-			omp_set_lock(&working_lock);
 			all_done |= working[i];
-			omp_unset_lock(&working_lock);
 			if (all_done)
 				break;
 		}
+		omp_unset_lock(&working_lock);
 
-		if (all_done)
+		if (all_done) {
 			all_done = 0;
-		else
+		} else {
 			break;
+		}
 	}
 	send_queue_len = pq_length(shared_queue);
 
-	// MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc],DATA_TAG,
-	// 		 torus);
 	queue_balancing(neighbors_rank[direc], send_queue_len, recv_queue_len, 1);
 	omp_unset_lock(&work_lock_turnstile);
 }
 
 void loadbal_initiator(enum CommNum direc) {
-	int send_queue_len, recv_queue_len;
+	int send_queue_len;
 
 	omp_set_lock(&work_lock_turnstile);
 	int all_done = 0;
 	while (!all_done) {
+		omp_set_lock(&working_lock);
 		for (int i = 0; i < NUM_THREADS-1; i++) {
-			omp_set_lock(&working_lock);
 			all_done |= working[i];
-			omp_unset_lock(&working_lock);
 			if (all_done)
 				break;
 		}
+		omp_unset_lock(&working_lock);
 
-		if (all_done)
+		if (all_done) {
 			all_done = 0;
-		else
+		} else {
 			break;
+		}
 	}
 	send_queue_len = pq_length(shared_queue);
-// 	omp_unset_lock(&work_lock_turnstile);
 
 	MPI_Send(&send_queue_len, 1, MPI_INT, neighbors_rank[direc], DATA_TAG, torus);
-	
+
 	queue_balancing(neighbors_rank[direc], send_queue_len, 0, 0);
 	omp_unset_lock(&work_lock_turnstile);
 }
@@ -498,20 +495,13 @@ void expand_partial_solution(queue* private_queue, void* domain_data) {
 }
 
 void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len, int recp) {
-	//printf("ENTER %d as %d for %d\n", my_rank, recp, n_rank);
 	int pos = 0;
-// 	if (my_queue_len == 0 && neighbour_queue_len==0) {
-// 		bothzero_loadbal ++;
-// 		//printf("BOTH ZERO\n");
-// //		omp_unset_lock(&work_lock_turnstile);
-// 		return;
-// 	}
+
 	int ros_flag;
 
 	if(recp){
 		int flag_for_comm;
 		if ( ABSVAL(my_queue_len, neighbour_queue_len) > LOAD_BAL_THRESH ) {
-			printf("QB\n");	
 			if (my_queue_len > neighbour_queue_len) {
 				flag_for_comm = 1;
 				ros_flag = 0;
@@ -520,7 +510,7 @@ void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len, int 
 				ros_flag = 1;
 			}
 
-			
+
 		} else {
 			flag_for_comm = -1;
 			ros_flag = -1;
@@ -529,7 +519,7 @@ void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len, int 
 		MPI_Send(&flag_for_comm, 1, MPI_INT, n_rank, DATA_TAG, torus);
 
 	} else {
-		
+
 		MPI_Recv(&ros_flag, 1, MPI_INT, n_rank, DATA_TAG, torus,
 			MPI_STATUS_IGNORE);
 
@@ -541,38 +531,28 @@ void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len, int 
 		return;
 	}
 
-	printf("%d RF: %d\n", recp, ros_flag);
-	printf("RANK:%d NEIGHBOUR_RANK:%d MY_QUEUE:%d NEIGHBOUR_QUEUE:%d \n", my_rank,
-					n_rank, my_queue_len, neighbour_queue_len);
 	void* buff = malloc((LOAD_BAL_THRESH/2)*solution_vector_size);
 	if (!ros_flag) {
-		printf("ENTER %d as S %d\n", my_rank, n_rank);
 		pos = 0;
 		queue_head* send_data = pq_extract(shared_queue, (LOAD_BAL_THRESH/2));
-//			omp_unset_lock(&work_lock_turnstile);
-// 			printf("QUEUE_LEN: %d\n", send_data->length);
 		pack_array(send_data, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, &pos, problem_data);
 		MPI_Send(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus);
-// 			printf("SENT DATA\n");
-		printf("EXIT %d as S %d\n", my_rank, n_rank);
 	} else {
-		printf("ENTER %d as Ra %d\n", my_rank, n_rank);
 		pos = 0;
-//			omp_unset_lock(&work_lock_turnstile);
 		MPI_Recv(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus, MPI_STATUS_IGNORE);
-		printf("EXIT %d as Ra %d\n", my_rank, n_rank);
 		queue* new_queue = create_queue();
 		unpack_array(new_queue, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, (LOAD_BAL_THRESH/2), &pos, problem_data);
 
-		printf("nqlength %d\n",pq_length(new_queue));
+		float bscore;
+		omp_set_lock(&best_solution_lock);
+		bscore = best_score;
+		omp_unset_lock(&best_solution_lock);
+		pq_prune(new_queue, bscore);
 		pq_merge(shared_queue, new_queue);
 		destroy_queue(new_queue);
-// 			printf("RECD DATA\n");
 
 	}
 	free(buff);
-
-// 	omp_unset_lock(&work_lock_turnstile);
 }
 
 void send_bound() {
@@ -608,7 +588,7 @@ void receive_and_forward_bound() {
 		REPORT_ERROR(MPI_Recv(&recv_bound, 1, bound_comm_t, torus_neighbors_rank[LEFT],
 							BOUND_TAG, torus, MPI_STATUS_IGNORE),
 					"MPI_Recv : ERROR\n", );
-// 		printf("RANK:%d RECVD from LEFT: %f\n", my_rank, recv_bound.new_bound);
+
 		flag = 0;
 		omp_set_lock(&best_solution_lock);
 		if (recv_bound.new_bound < best_score) {
@@ -634,8 +614,6 @@ void receive_and_forward_bound() {
 							  BOUND_TAG, torus, MPI_STATUS_IGNORE),
 			   "MPI_Recv : ERROR\n", );
 
-// 		printf("RANK:%d RECVD from RIGHT: %f\n", my_rank, recv_bound.new_bound);
-
 		flag = 0;
 		omp_set_lock(&best_solution_lock);
 		if (recv_bound.new_bound < best_score) {
@@ -660,8 +638,6 @@ void receive_and_forward_bound() {
 		REPORT_ERROR(MPI_Recv(&recv_bound, 1, bound_comm_t, torus_neighbors_rank[DOWN],
 							  BOUND_TAG, torus, MPI_STATUS_IGNORE),
 			   "MPI_Recv : ERROR\n", );
-
-// 		printf("RANK:%d RECVD from DOWN: %f\n", my_rank, recv_bound.new_bound);
 
 		flag = 0;
 		omp_set_lock(&best_solution_lock);
@@ -693,8 +669,6 @@ void receive_and_forward_bound() {
 		REPORT_ERROR(MPI_Recv(&recv_bound, 1, bound_comm_t, torus_neighbors_rank[UP],
 							  BOUND_TAG, torus, MPI_STATUS_IGNORE),
 			   "MPI_Recv : ERROR\n", );
-
-// 		printf("RANK:%d RECVD from UP: %f\n", my_rank, recv_bound.new_bound);
 
 		flag = 0;
 		omp_set_lock(&best_solution_lock);
@@ -745,7 +719,7 @@ void unpack_array(queue* q, void* outbuff, int buff_size, int len, int* pos,
 
 int initializeLoad(void* domain_data) {
 	if (my_rank == 0) {
-		pq_insert_nc(shared_queue, 0.0,
+		pq_insert_nc(shared_queue, get_root_partial_soln_score(domain_data),
 					 get_root_partial_solution(domain_data));
 
 		#pragma omp parallel num_threads(NUM_THREADS)
@@ -836,7 +810,9 @@ int calculate_prev_rank() {
 
 
 void termination_init() {
-//	printf("INIT\n");
+	if(pq_length(shared_queue) != 0)
+		return;
+
 	int next_rank = calculate_next_rank();
 	int prev_rank = calculate_prev_rank();
 	int prev_q_len;
@@ -846,28 +822,46 @@ void termination_init() {
 	int kill_decline = 1;
 	int prev_num;
 	int dummy;
+	int all_done;
 
 	/* ROUND 1 */
 	MPI_Send(&num_zero, 1, MPI_INT, next_rank, TERM_INIT_TAG, torus);
 	MPI_Recv(&prev_num, 1, MPI_INT, prev_rank, TERM_INIT_TAG, torus, MPI_STATUS_IGNORE);
 
 	if(prev_num != 0) {
-		//TODO: Restart Load Balncing
 		MPI_Send(&pos_num, 1, MPI_INT, next_rank, TERM_ROUND_2, torus);
 	} else {
 		/* ROUND 2 */
+		omp_set_lock(&work_lock_turnstile);
+		all_done = 0;
+		while (!all_done) {
+			omp_set_lock(&working_lock);
+			for (int i = 0; i < NUM_THREADS-1; i++) {
+				all_done |= working[i];
+				if (all_done)
+					break;
+			}
+			omp_unset_lock(&working_lock);
+
+			if (all_done) {
+				all_done = 0;
+			} else {
+				break;
+			}
+		}
+		num_zero = pq_length(shared_queue);
+		omp_unset_lock(&work_lock_turnstile);
+
 		MPI_Send(&num_zero, 1, MPI_INT, next_rank, TERM_ROUND_2, torus);
 		MPI_Recv(&prev_q_len, 1, MPI_INT,  prev_rank, TERM_ROUND_2, torus, MPI_STATUS_IGNORE);
 
 		if(prev_q_len != 0){
-			//TODO: Restart
 			MPI_Send(&kill_decline, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus);
-			//TODO: Restart
 			MPI_Recv(&dummy, 1, MPI_INT, prev_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
 		} else {
 			MPI_Send(&kill_confirmation, 1, MPI_INT, next_rank, TERM_KILL_TAG, torus);
 			MPI_Recv(&dummy, 1, MPI_INT, prev_rank, TERM_KILL_TAG, torus, MPI_STATUS_IGNORE);
-			//exit_flag = 1;
+
 			end_program = 1;
 		}
 	}
@@ -902,23 +896,22 @@ int termination_detection(int term_init_msg) {
 			omp_set_lock(&work_lock_turnstile);
 			all_done = 0;
 			while (!all_done) {
+				omp_set_lock(&working_lock);
 				for (int i = 0; i < NUM_THREADS-1; i++) {
-					omp_set_lock(&working_lock);
 					all_done |= working[i];
-					omp_unset_lock(&working_lock);
 					if (all_done)
 						break;
 				}
+				omp_unset_lock(&working_lock);
 
-				if (all_done)
+				if (all_done) {
 					all_done = 0;
-				else
+				} else {
 					break;
+				}
 			}
 			q_len = pq_length(shared_queue);
 			omp_unset_lock(&work_lock_turnstile);
-
-			//NOTREQD-TODO: Stop Load balancing
 
 			if( q_len != 0 ) {
 				i_stopped_chain = 1;
@@ -936,18 +929,19 @@ int termination_detection(int term_init_msg) {
 				omp_set_lock(&work_lock_turnstile);
 				all_done = 0;
 				while (!all_done) {
+					omp_set_lock(&working_lock);
 					for (int i = 0; i < NUM_THREADS-1; i++) {
-						omp_set_lock(&working_lock);
 						all_done |= working[i];
-						omp_unset_lock(&working_lock);
 						if (all_done)
 							break;
 					}
+					omp_unset_lock(&working_lock);
 
-					if (all_done)
+					if (all_done) {
 						all_done = 0;
-					else
+					} else {
 						break;
+					}
 				}
 				add_len = pq_length(shared_queue) + prev_q_len;
 				omp_unset_lock(&work_lock_turnstile);

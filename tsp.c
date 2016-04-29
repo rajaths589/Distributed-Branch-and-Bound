@@ -72,6 +72,10 @@ void* populate_domain_data(int argc, char** argv) {
 	return (void*) data;
 }
 
+float get_root_partial_soln_score(void* domain_specific_data) {
+	return 0.0;
+}
+
 solution_vector get_root_partial_solution(void* domain_specific_data) {
 	NEW(tsp_path, empty_solution);
 
@@ -131,11 +135,11 @@ int construct_candidates(solution_vector partial_solution, float partial_soln_sc
 void print_solution(solution_vector sol, float score) {
 	tsp_path* solution = (tsp_path*) sol;
 
-	printf("Curr length : %d\n", solution->curr_length);
-	for (int i = 0; i < solution->curr_length; i++) {
-		printf("%d\t", solution->path[i]);
+	printf("Solution:\n");
+	for (int i = 0; i < solution->curr_length-1; i++) {
+		printf("%d -> ", solution->path[i]);
 	}
-	printf("\n");
+	printf("%d \n", solution->path[solution->curr_length]);
 	printf("Cost : %f\n", score);
 }
 
@@ -148,24 +152,20 @@ void pack_solution(void* buff, int buff_size, int* pos, solution_vector vec, flo
 				   MPI_Comm comm, void* problem_data) {
 
 	tsp_path* path = (tsp_path*) vec;
-//	print_solution(path, score);
 	MPI_Pack(&score, 1, MPI_FLOAT, buff, buff_size, pos, comm);
 	MPI_Pack(&path->curr_length, 1, MPI_INT, buff, buff_size, pos, comm);
 	MPI_Pack(path->path, path->max_length, MPI_INT, buff, buff_size, pos, comm);
 }
 
-solution_vector unpack_solution(void* buff, int buff_size, MPI_Comm comm, int* pos, float*
-score,
-						void* problem_data) {
+solution_vector unpack_solution(void* buff, int buff_size, MPI_Comm comm, int* pos,
+								float* score, void* problem_data) {
 
 	tsp_path* p = (tsp_path*) get_root_partial_solution(problem_data);
 	MPI_Unpack(buff, buff_size, pos, score, 1, MPI_FLOAT, comm);
 	MPI_Unpack(buff, buff_size, pos, &p->curr_length, 1, MPI_INT, comm);
 	MPI_Unpack(buff, buff_size, pos, p->path, p->max_length, MPI_INT, comm);
-//	print_solution(p, *score);
 
 	//populate bitvector
-//	printf("%d %d\n", p->curr_length, p->max_length);
 //	assert(p->curr_length < p->max_length);
 	for (int i = 0; i < p->curr_length; i++)
 		setIndex(p->used_vertices, p->path[i]);
