@@ -100,7 +100,10 @@ int stop_flag = 0;
 
 
 int main(int argc, char** argv) {
-	MPI_Init(&argc, &argv);
+	int thread_support_required = MPI_THREAD_MULTIPLE;
+	int thread_support_supplied;
+	MPI_Init_thread(&argc, &argv, thread_support_required, &thread_support_supplied);
+// 	printf("THREAD SUPPORT: %d\n", thread_support_supplied);
 
 	setupCommunicators();
 	MPI_Comm_rank(torus, &my_rank);
