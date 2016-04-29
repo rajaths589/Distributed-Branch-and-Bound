@@ -332,8 +332,12 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	if (best_solution != NULL) {
-		print_solution(best_solution, best_score);
+	for (int i = 0; i < world_size; i++) {
+		MPI_Barrier(torus);
+		if (my_rank == i && best_solution != NULL) {
+			print_solution(best_solution, best_score);
+			printf("\n");
+		}
 	}
 
 	MPI_Finalize();

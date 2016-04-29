@@ -1,3 +1,7 @@
+#Binaries
+tsp
+vertex_color
+
 # Object files
 *.o
 *.ko

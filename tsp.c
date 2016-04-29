@@ -126,6 +126,8 @@ int construct_candidates(solution_vector partial_solution, float partial_soln_sc
 			l = l->next;
 		}
 
+		destroy_bitvector(partial->used_vertices);
+		free(partial->path);
 		free(partial);
 	}
 

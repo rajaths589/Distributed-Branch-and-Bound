@@ -119,6 +119,11 @@ int construct_candidates(solution_vector partial_solution, float partial_soln_sc
 		}
 	}
 
+	destroy_bitvector(clashing_colors);
+	destroy_bitvector(used_colors);
+	free(partial->vertex_colors);
+	free(partial);
+
 	return 0;
 }
 
