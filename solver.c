@@ -339,11 +339,25 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	for (int i = 0; i < world_size; i++) {
-		MPI_Barrier(torus);
-		if (my_rank == i) {
-			list_print(best_solution, best_score);
+	float *scores_from_all;
+	float min_score;
+	if (my_rank == 0) {
+		scores_from_all = (float*) calloc(world_size, sizeof(float));
+		MPI_Gather(&best_score, 1, MPI_FLOAT, scores_from_all, 1, MPI_FLOAT, 0, torus);
+		min_score = best_score;
+		for (int i = 0; i < world_size; i++) {
+			if (scores_from_all[i] < min_score) {
+				min_score = scores_from_all[i];
+			}
 		}
+		MPI_Bcast(&min_score, 1, MPI_FLOAT, 0, torus);
+	} else {
+		MPI_Gather(&best_score, 1, MPI_FLOAT, NULL, 1, MPI_FLOAT, 0, torus);
+		MPI_Bcast(&min_score, 1, MPI_FLOAT, 0, torus);
+	}
+
+	if (best_score == min_score) {
+		list_print(best_solution, best_score);
 	}
 
 	MPI_Finalize();
