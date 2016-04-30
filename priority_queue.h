@@ -34,6 +34,8 @@ void pq_merge(struct queue* q1, struct queue* q2);	//q2 will be cleared when the
 void pq_prune(struct queue* q, float min_bound);
 struct queue_head* pq_extract(struct queue* q, int num);	//extract num elements from queue
 
+struct queue_head* pq_extract_best(struct queue* q, int num, int* get);
+
 typedef struct queue queue;
 typedef struct queue_head queue_head;
 

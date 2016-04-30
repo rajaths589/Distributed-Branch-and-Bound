@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <math.h>
 #include <time.h>
-
+#include <assert.h>
 #include <omp.h>
 #include <mpi.h>
 
@@ -47,6 +47,7 @@ int end_program = 0;
 int in_loadbal = 0;
 int i_stopped_chain;
 int bothzero_loadbal = 0;
+
 void* problem_data;
 
 enum CommNum {
@@ -543,25 +544,51 @@ void queue_balancing(int n_rank, int my_queue_len, int neighbour_queue_len, int 
 		return;
 	}
 
-	void* buff = malloc((LOAD_BAL_THRESH/2)*solution_vector_size);
+	void* buff;
 	if (!ros_flag) {
 		pos = 0;
-		queue_head* send_data = pq_extract(shared_queue, (LOAD_BAL_THRESH/2));
-		pack_array(send_data, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, &pos, problem_data);
-		MPI_Send(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus);
+		int len;
+		queue_head* send_data = pq_extract_best(shared_queue, (LOAD_BAL_THRESH/2), &len);
+
+		if(len == 0 || send_data == NULL){
+			int dum = -1;
+			buff = malloc(sizeof(int));
+			int sz = sizeof(int);
+			MPI_Pack(&dum, 1, MPI_INT, buff, sz, &pos, torus);
+		} else {
+
+			buff = (void *) malloc(len*solution_vector_size);
+			pack_array(send_data, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, &pos, problem_data);
+		}
+
+		MPI_Send(buff, (len*solution_vector_size), MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus);
 	} else {
 		pos = 0;
-		MPI_Recv(buff, (LOAD_BAL_THRESH/2)*solution_vector_size, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus, MPI_STATUS_IGNORE);
-		queue* new_queue = create_queue();
-		unpack_array(new_queue, buff, (LOAD_BAL_THRESH/2)*solution_vector_size, (LOAD_BAL_THRESH/2), &pos, problem_data);
+		MPI_Status probe_stat;
+		int recv_sz;
+		MPI_Probe(n_rank, QUEUE_DATA_TAG,torus, &probe_stat);
+		MPI_Get_count(&probe_stat, MPI_BYTE, &recv_sz);
 
-		float bscore;
-		omp_set_lock(&best_solution_lock);
-		bscore = best_score;
-		omp_unset_lock(&best_solution_lock);
-		pq_prune(new_queue, bscore);
-		pq_merge(shared_queue, new_queue);
-		destroy_queue(new_queue);
+		buff = malloc(recv_sz);
+		MPI_Recv(buff, recv_sz, MPI_PACKED, n_rank, QUEUE_DATA_TAG, torus, MPI_STATUS_IGNORE);
+
+		if( recv_sz < solution_vector_size ) {
+			void *dummy_buff = malloc(recv_sz);
+			MPI_Unpack(buff, recv_sz, &pos, dummy_buff, recv_sz, MPI_BYTE, torus);
+		} else {
+			queue* new_queue = create_queue();
+			assert( recv_sz%solution_vector_size == 0 );
+			int unpack_len = recv_sz/solution_vector_size;
+			unpack_array(new_queue, buff, recv_sz, unpack_len, &pos, problem_data);
+
+			float bscore;
+			omp_set_lock(&best_solution_lock);
+			bscore = best_score;
+			omp_unset_lock(&best_solution_lock);
+			pq_prune(new_queue, bscore);
+			pq_merge(shared_queue, new_queue);
+			destroy_queue(new_queue);
+		}
 
 	}
 	free(buff);

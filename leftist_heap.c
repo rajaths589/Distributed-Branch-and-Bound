@@ -206,6 +206,38 @@ queue_head* extract_helper(queue_head* qh, int num) {
 	return temp_r;
 }
 
+queue_head* pq_extract_best(struct queue* q, int num, int* get) {
+	queue_head* qh = NULL;
+	queue_head* qh2;
+	int n = num;
+
+	assert(num > 0);
+
+	LOCK(q);
+
+	if(num > q->length){
+		printf("NUM: %d Q: %d\n", num, q->length);
+		n = q->length / 2;
+	}
+
+	*get = n;
+	if(n == 0){
+		UNLOCK(q);
+		return NULL;
+	}
+
+	while(n != 0) {
+		qh2 = extract_helper(q->root_node, n);
+		n -= qh2->length;
+		q->length = q->root_node->length;
+		qh = merge_helper(qh, qh2);
+	}
+
+	UNLOCK(q);
+
+	return qh;
+}
+
 queue_head* pq_extract(struct queue* q, int num) {
 	queue_head* qh = NULL;
 	queue_head* qh2;
